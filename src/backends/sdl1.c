@@ -320,8 +320,6 @@ void platformInitFunctions(Runner *runner) {
     g_runner = runner;
     runner->windowHasFocus = platformGetWindowFocus;
     runner->setCursor = platformSetCursor;
-    runner->getWindowPosition = platformGetWindowPosition;
-    runner->setWindowPosition = platformSetWindowPosition;
     runner->getWindowFullscreen = platformGetWindowFullscreen;
     runner->setWindowFullscreen = platformSetWindowFullscreen;
     runner->currentCursor = GML_CR_DEFAULT;
