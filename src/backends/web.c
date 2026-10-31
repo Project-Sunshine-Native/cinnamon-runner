@@ -205,6 +205,8 @@ bool platformGetWindowSize(int32_t *outW, int32_t *outH) {
 void platformInitFunctions(Runner *runner) {
     gRunner = runner;
     runner->setCursor = nullptr;
+    runner->getWindowFullscreen = platformGetWindowFullscreen;
+    runner->setWindowFullscreen = platformSetWindowFullscreen;
     runner->currentCursor = GML_CR_DEFAULT;
 }
 
@@ -218,6 +220,14 @@ void platformSetWindowSize(int32_t width, int32_t height) {
 
     if (gInitialized)
         emscripten_set_canvas_element_size("#canvas", gWidth, gHeight);
+}
+
+bool platformGetWindowFullscreen(void) {
+    return false;
+}
+
+void platformSetWindowFullscreen(bool fullscreen) {
+    (void)fullscreen;
 }
 
 void platformSetWindowTitle(MAYBE_UNUSED const char *title) {
