@@ -421,6 +421,15 @@ void platformSetWindowSize(int32_t width, int32_t height) {
     [window setFrame:newFrame display:YES animate:NO];
 }
 
+bool platformGetWindowFullscreen(void) {
+    return ([window styleMask] & NSWindowStyleMaskFullScreen) != 0;
+}
+
+void platformSetWindowFullscreen(bool fullscreen) {
+    if (fullscreen == platformGetWindowFullscreen()) return;
+    [window toggleFullScreen:nil];
+}
+
 static bool platformGetWindowPosition(int32_t *outX, int32_t *outY) {
     if (!outX || !outY) return false;
     NSRect frame = [window frame];

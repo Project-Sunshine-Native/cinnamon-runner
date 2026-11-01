@@ -46,6 +46,14 @@ void platformSetWindowSize(int32_t width, int32_t height) {
     if (height > 0) g_height = height;
 }
 
+bool platformGetWindowFullscreen(void) {
+    return false;
+}
+
+void platformSetWindowFullscreen(bool fullscreen) {
+    (void)fullscreen;
+}
+
 void platformInitFunctions(Runner *runner) {
     g_runner = runner;
     runner->setCursor = NULL;
