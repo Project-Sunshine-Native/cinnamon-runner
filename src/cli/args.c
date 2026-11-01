@@ -1,7 +1,10 @@
 #include <loop.h>
 #include <getopt.h>
 
+#ifdef ENABLE_FILE_PICKER
 #include "../../vendor/tinyfd/tinyfiledialogs.h"
+#endif
+
 #ifdef _WIN32
 #include <io.h>
 #else
