@@ -2615,33 +2615,57 @@ static void parseSTRG(BinaryReader* reader, DataWin* dw) {
     free(ptrs);
 }
 
-static void resolveExternalTextures(BinaryReader* reader, DataWin* dw) {
-    if (!dw->tginOffset || !dw->txtr.textures) return;
-    BinaryReader_seek(reader, dw->tginOffset);
+static void parseTGIN(BinaryReader* reader, DataWin* dw) {
+    Tgin* t = &dw->tgin;
+
     uint32_t version = BinaryReader_readUint32(reader);
     if (version != 1) return;
-    uint32_t count = 0;
-    uint32_t* groups = readPointerTable(reader, &count);
+
+    uint32_t count;
+    uint32_t* ptrs = readPointerTable(reader, &count);
+    t->count = count;
+
+    if (count == 0) { free(ptrs); t->textureGroups = nullptr; return; }
+
+    t->textureGroups = (TextureGroup *)safeCalloc(count, sizeof(TextureGroup));
     repeat(count, i) {
-        BinaryReader_seek(reader, groups[i]);
-        const char* name = readStringPtr(reader, dw);
-        const char* directory = readStringPtr(reader, dw);
+        if (ptrs[i] == 0) continue;
+        BinaryReader_seek(reader, ptrs[i]);
+        TextureGroup* group = &t->textureGroups[i];
+        group->present = true;
+        group->name = readStringPtr(reader, dw);
+        group->directory = readStringPtr(reader, dw);
         BinaryReader_readUint32(reader);
         BinaryReader_readUint32(reader);
         uint32_t pageList = BinaryReader_readUint32(reader);
-        if (!name || !directory || !pageList) continue;
+        if (!pageList) continue;
         BinaryReader_seek(reader, pageList);
-        uint32_t pageCount = BinaryReader_readUint32(reader);
-        repeat(pageCount, j) {
-            uint32_t page = BinaryReader_readUint32(reader);
+        group->texturePageCount = BinaryReader_readUint32(reader);
+        if (group->texturePageCount > 0) {
+            group->texturePages = (uint32_t *)safeMalloc(group->texturePageCount * sizeof(uint32_t));
+            repeat(group->texturePageCount, j) {
+                group->texturePages[j] = BinaryReader_readUint32(reader);
+            }
+        }
+    }
+    free(ptrs);
+}
+
+static void resolveExternalTextures(DataWin* dw) {
+    if (!dw->txtr.textures) return;
+
+    repeat(dw->tgin.count, i) {
+        TextureGroup* group = &dw->tgin.textureGroups[i];
+        if (!group->present || !group->name || !group->directory) continue;
+        repeat(group->texturePageCount, j) {
+            uint32_t page = group->texturePages[j];
             if (page >= dw->txtr.count || dw->txtr.textures[page].blobOffset != 0) continue;
-            size_t length = strlen(directory) + strlen(name) + 32;
+            size_t length = strlen(group->directory) + strlen(group->name) + 32;
             char* path = (char*)safeMalloc(length);
-            snprintf(path, length, "%s/%s_%u.yytex", directory, name, (unsigned int)j);
+            snprintf(path, length, "%s/%s_%u.yytex", group->directory, group->name, (unsigned int)j);
             dw->txtr.textures[page].externalPath = path;
         }
     }
-    free(groups);
 }
 
 static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t chunkEnd, bool loadTextureDataLazily) {
@@ -2705,8 +2729,6 @@ static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t chunkEnd, bool l
         t->textures[i].blobData = nullptr;
     }
     free(ptrs);
-
-    resolveExternalTextures(reader, dw);
 
     // Compute blob sizes from successive offsets
     {
@@ -2970,6 +2992,7 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
             (options.parseTmln && memcmp(chunkName, "TMLN", 4) == 0) ||
             (options.parseObjt && memcmp(chunkName, "OBJT", 4) == 0) ||
             (options.parseRoom && memcmp(chunkName, "ROOM", 4) == 0) ||
+            (options.parseTgin && memcmp(chunkName, "TGIN", 4) == 0) ||
             (options.parseTpag && memcmp(chunkName, "TPAG", 4) == 0) ||
             (options.parseCode && memcmp(chunkName, "CODE", 4) == 0) ||
             (options.parseVari && memcmp(chunkName, "VARI", 4) == 0) ||
@@ -3029,8 +3052,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
             // Empty chunk, nothing to parse
         } else if (memcmp(chunkName, "EMBI", 4) == 0) {
             // Embedded Images chunk
-        } else if (memcmp(chunkName, "TGIN", 4) == 0) {
-            dw->tginOffset = (uint32_t)chunkDataStart;
+        } else if (options.parseTgin && memcmp(chunkName, "TGIN", 4) == 0) {
+            parseTGIN(&reader, dw);
         } else if (memcmp(chunkName, "ACRV", 4) == 0) {
             // Animation Curves chunk (GMS 2.3+)
             DataWin_bumpVersionTo(dw, 2, 3, 0, 0);
@@ -3105,6 +3128,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         }
         chunkIndex++;
     }
+
+    resolveExternalTextures(dw);
 
     // GMS2: apply default FPS to rooms with speed=0
     if (dw->gen8.gms2FPS > 0) {
@@ -3275,6 +3300,14 @@ void DataWin_free(DataWin* dw) {
             }
         }
         free(dw->objt.objects);
+    }
+
+    // TGIN
+    if (dw->tgin.textureGroups) {
+        repeat(dw->tgin.count, i) {
+            free(dw->tgin.textureGroups[i].texturePages);
+        }
+        free(dw->tgin.textureGroups);
     }
 
     // ACRV

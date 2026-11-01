@@ -36,6 +36,7 @@ typedef struct {
     bool parseTmln;
     bool parseObjt;
     bool parseRoom;
+    bool parseTgin;
     bool parseTpag;
     bool parseCode;
     bool parseVari;
@@ -727,6 +728,20 @@ typedef struct {
     Room* rooms;
 } RoomChunk;
 
+// tgin (texture groups)
+typedef struct {
+    bool present;
+    const char* name;
+    const char* directory;
+    uint32_t texturePageCount;
+    uint32_t* texturePages;
+} TextureGroup;
+
+typedef struct {
+    uint32_t count;
+    TextureGroup* textureGroups;
+} Tgin;
+
 // ===[ ACRV - Animation Curves ]===
 typedef enum {
     ANIMCURVE_TYPE_LINEAR = 0,
@@ -926,6 +941,7 @@ struct DataWin {
     Objt objt;
     RoomChunk room;
     // DAFL is empty, no field needed
+    Tgin tgin;
     Acrv acrv;
     Tpag tpag;
     Code code;
@@ -933,7 +949,6 @@ struct DataWin {
     Func func;
     Strg strg;
     Txtr txtr;
-    uint32_t tginOffset;
     Audo audo;
 
     DetectedFormat detectedFormat;

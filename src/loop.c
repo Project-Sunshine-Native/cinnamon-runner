@@ -553,6 +553,7 @@ int loop(CommandLineArgs args, const char *argv0) {
         options.parseTmln = true;
         options.parseObjt = true;
         options.parseRoom = true;
+        options.parseTgin = true;
         options.parseTpag = true;
         options.parseCode = true;
         options.parseVari = true;
@@ -583,6 +584,7 @@ int loop(CommandLineArgs args, const char *argv0) {
                 break;
             }
             options.parseTxtr = false;
+            options.parseTgin = false;
         } while(0);
 #endif
 #if defined(USE_MINIAUDIO) || defined(USE_OPENAL)
