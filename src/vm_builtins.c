@@ -20139,6 +20139,35 @@ static RValue builtin_texturegroup_get_status(MAYBE_UNUSED VMContext* ctx, MAYBE
     return RValue_makeInt32(3);
 }
 
+// texturegroup_get_textures
+static RValue builtin_texturegroup_get_textures(MAYBE_UNUSED VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("texturegroup_get_textures", 1, RValue_makeUndefined());
+
+    DataWin* dw = ctx->runner->dataWin;
+    char* tgroupName = RValue_toString(args[0], dw);
+
+    TextureGroup* tg = nullptr;
+    {
+    for (uint32_t i = 0; i < dw->tgin.count; i++) {
+        if (strcmp(dw->tgin.textureGroups[i].name, tgroupName) == 0) {
+            tg = &dw->tgin.textureGroups[i];
+            break;
+        }
+    }
+    }
+    free(tgroupName);
+    if (tg == nullptr) return RValue_makeUndefined();
+     
+    GMLArray* out = GMLArray_create(dw, tg->texturePageCount);
+    {
+    for (uint32_t i = 0; i < tg->texturePageCount; i++) {
+        *GMLArray_slot(out, i) = RValue_makeInt32((int32_t) tg->texturePages[i]);
+    }
+    }
+
+    return RValue_makeArray(out);
+}
+
 static RValue builtin_texture_set_stage(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     int32_t TextureSlot = (int32_t) RValue_toReal(args[0]);
     int32_t texID = (int32_t) RValue_toInt32(args[1]);
@@ -25782,6 +25811,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "texture_get_texel_height", builtin_texture_get_texel_height);
     VM_registerBuiltin(ctx, "texture_get_uvs", builtin_texture_get_uvs);
     VM_registerBuiltin(ctx, "texturegroup_get_status", builtin_texturegroup_get_status);
+    VM_registerBuiltin(ctx, "texturegroup_get_textures", builtin_texturegroup_get_textures);
     VM_registerBuiltin(ctx, "texture_set_stage", builtin_texture_set_stage);
     VM_registerBuiltin(ctx, "sprite_get_info", builtin_sprite_get_info);
     VM_registerBuiltin(ctx, "video_open", builtin_video_open);
