@@ -2243,11 +2243,14 @@ static void handlePushEnv(VMContext* ctx, OpWord opword, uint32_t instrAddr) {
     int32_t jumpOffset = OpWord_branchOffset(opword);
 
     // Pop target from stack
-    int32_t target = stackPopInt32(ctx);
+    RValue targetValue = stackPop(ctx);
+    int32_t target = RValue_toInt32(targetValue);
     // BC17: -9 (INSTANCE_STACKTOP) means "pop again for the real target"
     if (IS_WAD17_OR_HIGHER(ctx) && target == INSTANCE_STACKTOP) {
-        target = resolveInstanceStackTop(ctx);
+        targetValue = stackPop(ctx);
+        target = RValue_toInt32(targetValue);
     }
+    if (targetValue.type == RVALUE_UNDEFINED) target = INSTANCE_NOONE;
 
     // Create env frame, save current context
     EnvFrame* frame = (EnvFrame *)safeMalloc(sizeof(EnvFrame));
