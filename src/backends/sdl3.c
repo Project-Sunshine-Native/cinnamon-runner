@@ -156,11 +156,11 @@ static bool platformGetWindowFocus(void) {
     return SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS;
 }
 
-bool platformGetWindowFullscreen(void) {
+static bool platformGetWindowFullscreen(void) {
     return SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN;
 }
 
-void platformSetWindowFullscreen(bool fullscreen) {
+static void platformSetWindowFullscreen(bool fullscreen) {
     SDL_SetWindowFullscreen(window, fullscreen);
 }
 

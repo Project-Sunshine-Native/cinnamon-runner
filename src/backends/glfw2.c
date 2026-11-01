@@ -102,11 +102,11 @@ static bool platformGetWindowFocus(void) {
     return glfwGetWindowParam(GLFW_ACTIVE);
 }
 
-bool platformGetWindowFullscreen(void) {
+static bool platformGetWindowFullscreen(void) {
     return glfw2Fullscreen;
 }
 
-void platformSetWindowFullscreen(bool fullscreen) {
+static void platformSetWindowFullscreen(bool fullscreen) {
     if (fullscreen == glfw2Fullscreen) return;
     glfw2Fullscreen = fullscreen;
 }

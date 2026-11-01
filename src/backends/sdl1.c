@@ -238,11 +238,11 @@ static bool platformGetWindowFocus(void) {
     return SDL_GetAppState() & SDL_APPINPUTFOCUS;
 }
 
-bool platformGetWindowFullscreen(void) {
+static bool platformGetWindowFullscreen(void) {
     return scr ? (scr->flags & SDL_FULLSCREEN) : false;
 }
 
-void platformSetWindowFullscreen(bool fullscreen) {
+static void platformSetWindowFullscreen(bool fullscreen) {
     if (fullscreen == platformGetWindowFullscreen()) return;
     SDL_WM_ToggleFullScreen(scr);
 }

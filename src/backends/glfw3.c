@@ -148,11 +148,11 @@ static bool platformGetWindowFocus(void) {
 
 static int windowedX, windowedY, windowedW, windowedH;
 
-bool platformGetWindowFullscreen(void) {
+static bool platformGetWindowFullscreen(void) {
     return glfwGetWindowMonitor(window) != NULL;
 }
 
-void platformSetWindowFullscreen(bool fullscreen) {
+static void platformSetWindowFullscreen(bool fullscreen) {
     if (fullscreen == platformGetWindowFullscreen()) return;
     if (fullscreen) {
         glfwGetWindowPos(window, &windowedX, &windowedY);
