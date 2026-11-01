@@ -2052,12 +2052,6 @@ static RValue builtin_real(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t ar
     return RValue_makeReal(RValue_toReal(args[0]));
 }
 
-static RValue builtin_string(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("string", 1, RValue_makeOwnedString(safeStrdup("")));
-    char* result = RValue_toString(args[0], ctx->runner->dataWin);
-    return RValue_makeOwnedString(result);
-}
-
 // Value equality shared by ds_priority and array_contains, mirroring the HTML5 runner:
 // - When both values are numbers (any GML numeric type; they are all plain JS numbers there),
 //   they match when |a - b| <= GML_MATH_EPSILON.
@@ -2141,15 +2135,16 @@ static RValue builtin_internal_array_get(VMContext* ctx, RValue* args, int32_t a
     return RValue_makeIndependent(GMLArray_get(args[0].array, RValue_toInt32(args[1])));
 }
 
-// @@string@@
-static RValue builtin_interpolated_string(VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("@@string@@", 1, RValue_makeOwnedString(safeStrdup("")));
+static RValue formatStringArguments(VMContext* ctx, RValue* args, int32_t argCount, bool allowEscapes) {
     char* format = RValue_toString(args[0], ctx->runner->dataWin);
     if (argCount <= 1) return RValue_makeOwnedString(format);
     StringBuilder result = StringBuilder_create(strlen(format) + 1);
 
     for (size_t i = 0; format[i] != '\0';) {
-        if (format[i] == '{' && format[i + 1] >= '0' && format[i + 1] <= '9') {
+        if (allowEscapes && (format[i] == '{' || format[i] == '}') && format[i + 1] == format[i]) {
+            StringBuilder_appendChar(&result, format[i]);
+            i += 2;
+        } else if (format[i] == '{' && format[i + 1] >= '0' && format[i + 1] <= '9') {
             size_t j = i + 1;
             size_t index = 0;
             while (format[j] >= '0' && format[j] <= '9') {
@@ -2171,6 +2166,17 @@ static RValue builtin_interpolated_string(VMContext* ctx, RValue* args, int32_t 
 
     free(format);
     return RValue_makeOwnedString(result.buffer);
+}
+
+static RValue builtin_string(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("string", 1, RValue_makeOwnedString(safeStrdup("")));
+    return formatStringArguments(ctx, args, argCount, true);
+}
+
+// @@string@@
+static RValue builtin_interpolated_string(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("@@string@@", 1, RValue_makeOwnedString(safeStrdup("")));
+    return formatStringArguments(ctx, args, argCount, false);
 }
 
 // string_byte_at
@@ -20157,7 +20163,7 @@ static RValue builtin_texturegroup_get_textures(MAYBE_UNUSED VMContext* ctx, MAY
     }
     free(tgroupName);
     if (tg == nullptr) return RValue_makeUndefined();
-     
+
     GMLArray* out = GMLArray_create(dw, tg->texturePageCount);
     {
     for (uint32_t i = 0; i < tg->texturePageCount; i++) {
