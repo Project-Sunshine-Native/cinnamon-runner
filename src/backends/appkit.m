@@ -421,7 +421,6 @@ void platformSetWindowSize(int32_t width, int32_t height) {
     [window setFrame:newFrame display:YES animate:NO];
 }
 
-// TODO: test if these set the resolution properly
 static bool platformGetWindowFullscreen(void) {
     return ([window styleMask] & NSWindowStyleMaskFullScreen) != 0;
 }
