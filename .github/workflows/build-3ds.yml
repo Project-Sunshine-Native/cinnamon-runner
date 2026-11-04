@@ -19,6 +19,21 @@ jobs:
       - name: Install toolchain and portlibs
         run: dkp-pacman -Syu --needed --noconfirm 3ds-dev 3ds-libvorbisidec 3ds-libogg
 
+      - name: Checkout makerom source
+        uses: actions/checkout@v7
+        with:
+          repository: 3DSGuy/Project_CTR
+          ref: e8f5f529c54ff9b22a2491a480ffa69206bf7b19 # makerom-v0.19.0
+          path: build-tools/project-ctr
+          persist-credentials: false
+
+      # The prebuilt Linux makerom requires a newer glibc than this container.
+      - name: Build and install makerom
+        run: |
+          make -C build-tools/project-ctr/makerom deps
+          make -C build-tools/project-ctr/makerom -j2
+          install -m755 build-tools/project-ctr/makerom/bin/makerom /usr/local/bin/makerom
+
       - name: Configure
         run: cmake --preset 3ds
 
