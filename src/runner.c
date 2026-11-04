@@ -38,6 +38,8 @@
 
 // ===[ Runtime Layer Teardown Helpers ]===
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer) {
+    TileSpatialIndex_free(runtimeLayer->assetTileSpatialIndex);
+    runtimeLayer->assetTileSpatialIndex = nullptr;
     free(runtimeLayer->dynamicName);
     runtimeLayer->dynamicName = nullptr;
     size_t elementCount = arrlenu(runtimeLayer->elements);
@@ -736,6 +738,12 @@ static void fireDrawSubtype(Runner* runner, Drawable* drawables, int32_t drawabl
 #define GMS2_TILE_FLIP_MASK   0x20000000 // bit 29 (vertical flip)
 #define GMS2_TILE_ROTATE_MASK 0x40000000 // bit 30 (90 CW)
 
+static uint32_t tileLayerClampIndex(float index, uint32_t limit) {
+    if (index <= 0.0f) return 0u;
+    if ((double)index >= (double)limit) return limit;
+    return (uint32_t)index;
+}
+
 void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerOffsetX, float layerOffsetY) {
     if (data == nullptr || data->tileData == nullptr) return;
     if (0 > data->backgroundIndex) return;
@@ -755,35 +763,66 @@ void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerO
     uint32_t borderY = tileset->gms2OutputBorderY;
     uint32_t columns = tileset->gms2TileColumns;
 
-    repeat(data->tilesY, ty) {
-        repeat(data->tilesX, tx) {
-            uint32_t cell = data->tileData[ty * data->tilesX + tx];
+    Renderer* renderer = runner->renderer;
+    uint32_t startX = 0u, startY = 0u;
+    uint32_t endX = data->tilesX, endY = data->tilesY;
+    float bounds[4];
+    if (renderer->vtable->getTilemapDrawBounds != nullptr &&
+        renderer->vtable->getTilemapDrawBounds(renderer, bounds) &&
+        isfinite(layerOffsetX) && isfinite(layerOffsetY) &&
+        isfinite(bounds[0]) && isfinite(bounds[1]) &&
+        isfinite(bounds[2]) && isfinite(bounds[3]) &&
+        bounds[2] > bounds[0] && bounds[3] > bounds[1]) {
+        // A rotated rectangular tile can extend beyond its cell. Include that
+        // overhang and a rounding margin before clamping to the tilemap.
+        float padding = fmaxf((float)tileW, (float)tileH) + 1.0f;
+        startX = tileLayerClampIndex(floorf((bounds[0] - layerOffsetX - padding) / (float)tileW), data->tilesX);
+        startY = tileLayerClampIndex(floorf((bounds[1] - layerOffsetY - padding) / (float)tileH), data->tilesY);
+        endX = tileLayerClampIndex(ceilf((bounds[2] - layerOffsetX + padding) / (float)tileW), data->tilesX);
+        endY = tileLayerClampIndex(ceilf((bounds[3] - layerOffsetY + padding) / (float)tileH), data->tilesY);
+    }
+
+    // Consecutive cells often share an index, including cells with different
+    // flip flags. Avoid ARM's software integer division for each of those cells.
+    uint32_t previousTileIndex = UINT32_MAX;
+    int32_t srcX = 0, srcY = 0;
+    uint32_t strideX = tileW + 2 * borderX;
+    uint32_t strideY = tileH + 2 * borderY;
+    for (uint32_t ty = startY; ty < endY; ty++) {
+        const uint32_t* rowData = data->tileData + (size_t)ty * data->tilesX;
+        float cellY = (float)(ty * tileH) + layerOffsetY;
+        float pivotY = cellY + (float)tileH / 2.0f;
+        for (uint32_t tx = startX; tx < endX; tx++) {
+            uint32_t cell = rowData[tx];
             uint32_t tileIndex = cell & GMS2_TILE_INDEX_MASK;
             if (tileIndex == 0) continue; // 0 = empty
             if (tileIndex > tileset->gms2TileCount) continue;
 
-            uint32_t col = tileIndex % columns;
-            uint32_t row = tileIndex / columns;
-            int32_t srcX = (int32_t) (col * (tileW + 2 * borderX) + borderX);
-            int32_t srcY = (int32_t) (row * (tileH + 2 * borderY) + borderY);
+            if (tileIndex != previousTileIndex) {
+                uint32_t col = tileIndex % columns;
+                uint32_t row = tileIndex / columns;
+                srcX = (int32_t)(col * strideX + borderX);
+                srcY = (int32_t)(row * strideY + borderY);
+                previousTileIndex = tileIndex;
+            }
 
             bool mirror = (cell & GMS2_TILE_MIRROR_MASK) != 0;
             bool flip = (cell & GMS2_TILE_FLIP_MASK) != 0;
             bool rotate = (cell & GMS2_TILE_ROTATE_MASK) != 0;
 
             float angleDeg = rotate ? 90.0f : 0.0f;
-            float pivotX = (float)(tx * tileW) + layerOffsetX + (float)tileW / 2.0f;
-            float pivotY = (float)(ty * tileH) + layerOffsetY + (float)tileH / 2.0f;
+            float cellX = (float)(tx * tileW) + layerOffsetX;
+            float pivotX = cellX + (float)tileW / 2.0f;
 
             float xscale = mirror ? -1.0f : 1.0f;
             float yscale = flip ? -1.0f : 1.0f;
 
             // With negative scale the quad grows in the opposite direction, so shift the
             // destination by one tile to keep the origin at the top-left of the cell.
-            float dstX = (float) (tx * tileW) + layerOffsetX + (mirror ? (float) tileW : 0.0f);
-            float dstY = (float) (ty * tileH) + layerOffsetY + (flip ? (float) tileH : 0.0f);
+            float dstX = cellX + (mirror ? (float) tileW : 0.0f);
+            float dstY = cellY + (flip ? (float) tileH : 0.0f);
 
-            runner->renderer->vtable->drawSpritePart(runner->renderer, tpagIndex, srcX, srcY, (int32_t) tileW, (int32_t) tileH, dstX, dstY, xscale, yscale, angleDeg, pivotX, pivotY, 0xFFFFFF, 1.0f);
+            renderer->vtable->drawSpritePart(renderer, tpagIndex, srcX, srcY, (int32_t) tileW, (int32_t) tileH, dstX, dstY, xscale, yscale, angleDeg, pivotX, pivotY, 0xFFFFFF, 1.0f);
         }
     }
 }
@@ -926,6 +965,77 @@ void Runner_drawInstance(Runner* runner, Instance* inst) {
         else if (runner->renderer != nullptr)
             Renderer_drawSelf(runner->renderer, inst);
     }
+}
+
+static RuntimeLayerElement** buildLegacyTileElementLookup(
+    Runner* runner, RuntimeLayer* layer, const RoomLayerAssetsData* assets) {
+    if (assets->legacyTileCount == 0u) return nullptr;
+    arrsetlen(runner->legacyTileElementScratch, assets->legacyTileCount);
+    RuntimeLayerElement** lookup = runner->legacyTileElementScratch;
+    memset(lookup, 0, assets->legacyTileCount * sizeof(*lookup));
+
+    // Parsed tiles form a contiguous array. Map their addresses to tile indices
+    // once, instead of searching every element again for each tile (O(n^2)).
+    // Rebuild after Draw scripts so element moves, deletions and reallocations
+    // are reflected immediately without retaining pointers across frames.
+    uintptr_t tilesStart = (uintptr_t)assets->legacyTiles;
+    repeat(arrlenu(layer->elements), i) {
+        RuntimeLayerElement* el = &layer->elements[i];
+        if (el->type != RuntimeLayerElementType_Tile || el->tileElement == nullptr)
+            continue;
+        uintptr_t address = (uintptr_t)el->tileElement;
+        if (address < tilesStart) continue;
+        uintptr_t offset = address - tilesStart;
+        if (offset % sizeof(RoomTile) != 0u) continue;
+        uintptr_t index = offset / sizeof(RoomTile);
+        if (index < assets->legacyTileCount && lookup[index] == nullptr)
+            lookup[index] = el;
+    }
+    return lookup;
+}
+
+static bool selectVisibleLegacyTiles(Runner* runner, RuntimeLayer* layer,
+    const RoomLayerAssetsData* assets, float bounds[4], uint32_t* count) {
+    Renderer* renderer = runner->renderer;
+    if (renderer == nullptr || assets->legacyTileCount == 0u ||
+        renderer->vtable->getTilemapDrawBounds == nullptr ||
+        !renderer->vtable->getTilemapDrawBounds(renderer, bounds)) return false;
+#ifdef ENABLE_VM_TRACING
+    if (shlen(runner->vmContext->tilesToBeTraced) > 0) return false;
+#endif
+    if (!isfinite(bounds[0]) || !isfinite(bounds[1]) || !isfinite(bounds[2]) ||
+        !isfinite(bounds[3]) || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) return false;
+
+    // Tile-layer shifts can differ by depth. Expand the spatial query by every
+    // active shift, then check each candidate against its actual shift below.
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    repeat(hmlenu(runner->tileLayerMap), i) {
+        const TileLayerState* state = &runner->tileLayerMap[i].value;
+        if (!isfinite(state->offsetX) || !isfinite(state->offsetY)) return false;
+        minX = fminf(minX, state->offsetX); maxX = fmaxf(maxX, state->offsetX);
+        minY = fminf(minY, state->offsetY); maxY = fmaxf(maxY, state->offsetY);
+    }
+    float query[4] = {bounds[0] - maxX, bounds[1] - maxY, bounds[2] - minX, bounds[3] - minY};
+    if (!isfinite(query[0]) || !isfinite(query[1]) ||
+        !isfinite(query[2]) || !isfinite(query[3])) return false;
+    if (!TileSpatialIndex_matches(layer->assetTileSpatialIndex, assets->legacyTiles,
+            assets->legacyTileCount, runner->assetTileGeometryRevision)) {
+        TileSpatialIndex_free(layer->assetTileSpatialIndex);
+        layer->assetTileSpatialIndex = TileSpatialIndex_create(assets->legacyTiles,
+            assets->legacyTileCount, runner->assetTileGeometryRevision);
+    }
+    arrsetlen(runner->visibleLegacyTileScratch, assets->legacyTileCount);
+    *count = TileSpatialIndex_query(layer->assetTileSpatialIndex, query, runner->visibleLegacyTileScratch);
+    return true;
+}
+
+static bool legacyTileVisible(const RoomTile* tile, float offsetX, float offsetY, const float bounds[4]) {
+    float x1 = (float)tile->x + offsetX, y1 = (float)tile->y + offsetY;
+    float x2 = x1 + (float)tile->width * tile->scaleX;
+    float y2 = y1 + (float)tile->height * tile->scaleY;
+    if (!isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2)) return true;
+    return fmaxf(x1, x2) >= bounds[0] && fminf(x1, x2) <= bounds[2] &&
+        fmaxf(y1, y2) >= bounds[1] && fminf(y1, y2) <= bounds[3];
 }
 
 void Runner_draw(Runner* runner) {
@@ -1105,9 +1215,8 @@ void Runner_draw(Runner* runner) {
                         renderBackgroundElement(runner, layerElement->backgroundElement, roomW, roomH, layerOffsetX, layerOffsetY);
                     } else if (layerElement->type == RuntimeLayerElementType_Tile && layerElement->tileElement != nullptr && layerElement->tileElementOwned) {
                         if (!layerElement->visible) continue;
-                        RoomTile rt = *layerElement->tileElement;
-                        rt.alpha = layerElement->alpha;
-                        Renderer_drawTile(runner->renderer, &rt, layerOffsetX, layerOffsetY);
+                        Renderer_drawTileWithAlpha(runner->renderer, layerElement->tileElement,
+                            layerOffsetX, layerOffsetY, layerElement->alpha);
                     }
                 }
             }
@@ -1116,19 +1225,16 @@ void Runner_draw(Runner* runner) {
             RoomLayer* parsedLayer = Runner_findRoomLayerById(runner->currentRoom, (int32_t) runtimeLayer->id);
             if (parsedLayer != nullptr && parsedLayer->type == RoomLayerType_Assets) {
                 RoomLayerAssetsData* data = parsedLayer->assetsData;
-                size_t tileElementCount = arrlenu(runtimeLayer->elements);
-                repeat(data->legacyTileCount, j) {
+                float tileBounds[4];
+                uint32_t tileCount = data->legacyTileCount;
+                bool boundedTiles = selectVisibleLegacyTiles(runner, runtimeLayer, data, tileBounds, &tileCount);
+                RuntimeLayerElement** tileElements = runner->renderer != nullptr
+                    ? buildLegacyTileElementLookup(runner, runtimeLayer, data) : nullptr;
+                repeat(tileCount, tileCursor) {
+                    uint32_t j = boundedTiles ? runner->visibleLegacyTileScratch[tileCursor] : tileCursor;
                     if (runner->renderer != nullptr) {
                         RoomTile* tile = &data->legacyTiles[j];
-                        // Find the matching RuntimeLayerElement so we can honor per-element visibility
-                        RuntimeLayerElement* tileEl = nullptr;
-                        repeat(tileElementCount, k) {
-                            RuntimeLayerElement* candidate = &runtimeLayer->elements[k];
-                            if (candidate->type == RuntimeLayerElementType_Tile && candidate->tileElement == tile) {
-                                tileEl = candidate;
-                                break;
-                            }
-                        }
+                        RuntimeLayerElement* tileEl = tileElements[j];
                         if (tileEl != nullptr && !tileEl->visible) continue;
                         // Check if this tile's layer is hidden via tile_layer_hide()
                         ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
@@ -1138,6 +1244,7 @@ void Runner_draw(Runner* runner) {
                             offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
                             offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
                         }
+                        if (boundedTiles && !legacyTileVisible(tile, offsetX, offsetY, tileBounds)) continue;
 
 #ifdef ENABLE_VM_TRACING
                         // Trace tile drawing if requested
@@ -1165,9 +1272,8 @@ void Runner_draw(Runner* runner) {
                         }
 #endif
 
-                        RoomTile runtimeTile = *tile;
-                        if (tileEl != nullptr) runtimeTile.alpha = tileEl->alpha;
-                        Renderer_drawTile(runner->renderer, &runtimeTile, offsetX, offsetY);
+                        Renderer_drawTileWithAlpha(runner->renderer, tile, offsetX, offsetY,
+                            tileEl != nullptr ? tileEl->alpha : tile->alpha);
                     }
                 }
 
@@ -5329,6 +5435,10 @@ void Runner_free(Runner* runner) {
 
     arrfree(runner->cachedDrawables);
     runner->cachedDrawables = nullptr;
+    arrfree(runner->legacyTileElementScratch);
+    runner->legacyTileElementScratch = nullptr;
+    arrfree(runner->visibleLegacyTileScratch);
+    runner->visibleLegacyTileScratch = nullptr;
     arrfree(runner->instanceSnapshots);
     arrfree(runner->sequenceSnapshots);
     arrfree(runner->sequenceEvents);

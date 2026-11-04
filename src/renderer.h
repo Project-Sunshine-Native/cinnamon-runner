@@ -186,6 +186,11 @@ typedef struct {
     void (*gpuSetFog)(Renderer* renderer, bool enable, uint32_t color, float start, float end);
     // Optional: platform-specific tile rendering (nullptr = use default drawSpritePart path)
     void (*drawTile)(Renderer* renderer, RoomTile* tile, float offsetX, float offsetY);
+    // Optional: preserve the source tile address while applying runtime element alpha.
+    void (*drawTileWithAlpha)(Renderer* renderer, const RoomTile* tile, float offsetX, float offsetY, float alpha);
+    // Optional conservative tilemap bounds: left, top, right, bottom in world coordinates.
+    // Return false when the current projection cannot safely bound the tilemap.
+    bool (*getTilemapDrawBounds)(const Renderer* renderer, float bounds[4]);
     void (*drawSpriteTiled)(Renderer* renderer, int32_t tpagIndex, float originX, float originY, float x, float y, float xscale, float yscale, bool tileX, bool tileY, float roomW, float roomH, uint32_t color, float alpha);
     // Surface Functions
     int32_t (*createSurface)(Renderer* renderer, int32_t width, int32_t height);
@@ -692,7 +697,7 @@ static inline int32_t Renderer_resolveSpriteTPAGIndex(DataWin* dataWin, int32_t 
 }
 
 // Resolves a SPRT or BGND index to a TPAG index
-static inline int32_t Renderer_resolveObjectTPAGIndex(DataWin* dataWin, RoomTile *tile) {
+static inline int32_t Renderer_resolveObjectTPAGIndex(DataWin* dataWin, const RoomTile* tile) {
     if (!tile->useSpriteDefinition)
         return Renderer_resolveBackgroundTPAGIndex(dataWin, tile->backgroundDefinition);
     else
@@ -798,6 +803,17 @@ static inline void Renderer_drawTile(Renderer* renderer, RoomTile* tile, float o
     uint32_t bgr = tile->color & 0x00FFFFFF;
 
     renderer->vtable->drawSpritePart(renderer, tpagIndex, atlasOffX, atlasOffY, srcW, srcH, drawX, drawY, tile->scaleX, tile->scaleY, 0.0f, 0.0f, 0.0f, bgr, tile->alpha);
+}
+
+static inline void Renderer_drawTileWithAlpha(Renderer* renderer, const RoomTile* tile,
+    float offsetX, float offsetY, float alpha) {
+    if (renderer->vtable->drawTileWithAlpha != nullptr) {
+        renderer->vtable->drawTileWithAlpha(renderer, tile, offsetX, offsetY, alpha);
+        return;
+    }
+    RoomTile runtimeTile = *tile;
+    runtimeTile.alpha = alpha;
+    Renderer_drawTile(renderer, &runtimeTile, offsetX, offsetY);
 }
 
 // Native runner clamps to [4, 64] and rounds down to the nearest multiple of 4.

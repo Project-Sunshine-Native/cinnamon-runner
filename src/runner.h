@@ -17,6 +17,7 @@
 #include "vm.h"
 #include "random.h"
 #include "sequence.h"
+#include "tile_spatial_index.h"
 
 // ===[ Event Type Constants ]===
 #define EVENT_ROOM_CREATION  -2
@@ -267,6 +268,7 @@ typedef struct {
     int32_t endScript;
     int32_t shaderIndex;
     RuntimeLayerElement* elements; // stb_ds array
+    TileSpatialIndex* assetTileSpatialIndex;
 } RuntimeLayer;
 
 // stb_ds hashmap entry: depth -> tile layer state
@@ -793,6 +795,10 @@ struct Runner {
     //   structureDirty - the SET of entries changed (instance/layer create or destroy, room change). Full rebuild.
     //   sortDirty      - the entries are the same but .depth values may have shifted. Refresh depths and only re-sort if order broke. Cheap when small depth shifts don't cross neighbors (typical depth=-y games).
     Drawable* cachedDrawables; // stb_ds array
+    // Rebuilt per asset-layer draw; capacity is reused between layers/frames.
+    RuntimeLayerElement** legacyTileElementScratch; // indexed by parsed tile index
+    uint32_t* visibleLegacyTileScratch;
+    uint64_t assetTileGeometryRevision; // bump whenever parsed tile geometry changes
     bool drawableListStructureDirty;
     bool drawableListSortDirty;
     // Struct instances created by @@NewGMLObject@@. Reuses Instance with objectIndex=STRUCT_OBJECT_INDEX.

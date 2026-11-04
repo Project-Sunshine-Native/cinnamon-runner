@@ -16799,15 +16799,25 @@ static RoomTile* findTileElement(Runner* runner, RValue idArg) {
 
 static RValue builtin_layer_tile_x(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     RoomTile* tile = findTileElement(ctx->runner, args[0]);
-    if (tile != nullptr)
-        tile->x = RValue_toInt32(args[1]);
+    if (tile != nullptr) {
+        int32_t x = RValue_toInt32(args[1]);
+        if (tile->x != x) {
+            tile->x = x;
+            ctx->runner->assetTileGeometryRevision++;
+        }
+    }
     return RValue_makeUndefined();
 }
 
 static RValue builtin_layer_tile_y(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     RoomTile* tile = findTileElement(ctx->runner, args[0]);
-    if (tile != nullptr)
-        tile->y = RValue_toInt32(args[1]);
+    if (tile != nullptr) {
+        int32_t y = RValue_toInt32(args[1]);
+        if (tile->y != y) {
+            tile->y = y;
+            ctx->runner->assetTileGeometryRevision++;
+        }
+    }
     return RValue_makeUndefined();
 }
 
