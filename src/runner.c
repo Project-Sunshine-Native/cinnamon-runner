@@ -2163,8 +2163,91 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     logInfo("Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
 }
 
+int32_t Runner_requestStringAsync(Runner* runner, const char* prompt, const char* defaultText) {
+    if (runner->getStringInput == nullptr) return -1;
+    int32_t requestId = runner->asyncDialogNextRequestId++;
+    AsyncStringDialogRequest request = {
+        .requestId = requestId,
+        .prompt = safeStrdup(prompt),
+        .defaultText = safeStrdup(defaultText),
+    };
+    arrput(runner->asyncStringDialogRequests, request);
+    return requestId;
+}
+
+bool Runner_processStringDialog(Runner* runner) {
+    if (arrlen(runner->asyncStringDialogRequests) == 0) return false;
+    AsyncStringDialogRequest request = runner->asyncStringDialogRequests[0];
+    arrdel(runner->asyncStringDialogRequests, 0);
+    char* text = runner->getStringInput != nullptr
+        ? runner->getStringInput(request.prompt, request.defaultText) : nullptr;
+    AsyncStringDialogResult result = {
+        .requestId = request.requestId,
+        .accepted = text != nullptr,
+        .text = text != nullptr ? text : safeStrdup(""),
+    };
+    arrput(runner->asyncStringDialogResults, result);
+    free(request.prompt);
+    free(request.defaultText);
+    return true;
+}
+
+static void clearStringDialogs(Runner* runner) {
+    repeat(arrlen(runner->asyncStringDialogRequests), i) {
+        free(runner->asyncStringDialogRequests[i].prompt);
+        free(runner->asyncStringDialogRequests[i].defaultText);
+    }
+    arrfree(runner->asyncStringDialogRequests);
+    runner->asyncStringDialogRequests = nullptr;
+    repeat(arrlen(runner->asyncStringDialogResults), i) {
+        free(runner->asyncStringDialogResults[i].text);
+    }
+    arrfree(runner->asyncStringDialogResults);
+    runner->asyncStringDialogResults = nullptr;
+}
+
+static void dispatchStringDialogResults(Runner* runner) {
+    // Detach the queue: requests made by a handler complete on a later step.
+    AsyncStringDialogResult* pending = runner->asyncStringDialogResults;
+    runner->asyncStringDialogResults = nullptr;
+    repeat(arrlen(pending), i) {
+        AsyncStringDialogResult result = pending[i];
+        int32_t mapId = -1;
+        repeat(arrlen(runner->dsMapPool), j) {
+            if (runner->dsMapPool[j] == nullptr) {
+                mapId = (int32_t)j;
+                break;
+            }
+        }
+        if (mapId < 0) {
+            arrput(runner->dsMapPool, nullptr);
+            mapId = (int32_t)arrlen(runner->dsMapPool) - 1;
+        }
+        DsMapEntry** map = &runner->dsMapPool[mapId];
+        shput(*map, safeStrdup("id"), RValue_makeReal((GMLReal)result.requestId));
+        shput(*map, safeStrdup("status"), RValue_makeBool(result.accepted));
+        shput(*map, safeStrdup("result"), RValue_makeOwnedString(result.text));
+        int32_t previousMapId = runner->asyncLoadMapId;
+        runner->asyncLoadMapId = mapId;
+        Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ASYNC_DIALOG);
+        runner->asyncLoadMapId = previousMapId;
+        // A handler may grow the pool or destroy the temporary map.
+        map = &runner->dsMapPool[mapId];
+        if (*map != nullptr) {
+            repeat(shlen(*map), j) {
+                free((*map)[j].key);
+                RValue_free(&(*map)[j].value);
+            }
+            shfree(*map);
+            *map = nullptr;
+        }
+    }
+    arrfree(pending);
+}
+
 // Cleans up the runner state, used when freeing the Runner or when restarting the Runner
 static void cleanupState(Runner* runner) {
+    clearStringDialogs(runner);
     Physics_free(runner);
     // Drop VM-side RValue holders (globals, stack, call frames) BEFORE freeing any Instance memory. This way any RVALUE_STRUCT refs decrement against still-live struct memory; otherwise we'd free a struct here and then have VM_free's later VM_reset try to decRef a dangling pointer.
     if (runner->vmContext != nullptr) {
@@ -2426,7 +2509,7 @@ void Runner_reset(Runner* runner) {
     runner->asyncBufferNextRequestId = 1;
     runner->xboxAccountPickerPendingId = -1;
     runner->xboxAccountPickerPadIndex = 0;
-    runner->xboxAsyncIdCounter = 1;
+    runner->asyncDialogNextRequestId = 1;
     arrsetlen(runner->callLaterEntries, 0);
     runner->nextCallLaterId = 1;
     runner->score = 0.0;
@@ -4871,6 +4954,8 @@ void Runner_step(Runner* runner) {
         }
         runner->asyncLoadMapId = -1;
     }
+
+    dispatchStringDialogResults(runner);
 
     // Fire pending async buffer save/load completions.
     // Copy the queue first so that new async loads aren't done in the list we are currently iterating.

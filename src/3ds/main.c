@@ -84,6 +84,22 @@ static bool n3ds_appGetWindowSize(int32_t* outW, int32_t* outH) {
 
 static void n3ds_appSetWindowSize(MAYBE_UNUSED int32_t width, MAYBE_UNUSED int32_t height) {}
 
+static char* n3ds_appGetStringInput(const char* prompt, const char* defaultText) {
+    // swkbd's length is in UTF-16 units; allow three UTF-8 bytes per unit.
+    enum { maxTextUnits = 1024 };
+    char text[3 * maxTextUnits + 1] = {0};
+    SwkbdState keyboard;
+    swkbdInit(&keyboard, SWKBD_TYPE_NORMAL, 2, maxTextUnits);
+    swkbdSetValidation(&keyboard, SWKBD_ANYTHING, 0, 0);
+    swkbdSetFeatures(&keyboard, SWKBD_PREDICTIVE_INPUT);
+    swkbdSetHintText(&keyboard, prompt);
+    swkbdSetInitialText(&keyboard, defaultText);
+    swkbdSetButton(&keyboard, SWKBD_BUTTON_LEFT, "Cancel", false);
+    swkbdSetButton(&keyboard, SWKBD_BUTTON_RIGHT, "OK", true);
+    SwkbdButton button = swkbdInputText(&keyboard, text, sizeof(text));
+    return button == SWKBD_BUTTON_CONFIRM ? safeStrdup(text) : NULL;
+}
+
 static bool n3ds_appJsonBool(const JsonValue* object, const char* key, bool defaultValue) {
     if (!JsonReader_isObject(object)) return defaultValue;
     JsonValue* value = JsonReader_getJsonValueByKey(object, key);
@@ -561,6 +577,7 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     if (gameArgs != NULL) Runner_setGameArgs(session->runner, gameArgs, (int32_t)arrlen(gameArgs));
     session->runner->getWindowSize = n3ds_appGetWindowSize;
     session->runner->setWindowSize = n3ds_appSetWindowSize;
+    session->runner->getStringInput = n3ds_appGetStringInput;
     session->runner->osType = settings != NULL ? settings->osType : OS_WINDOWS;
     if (!C3D_isReady(session->renderer)) {
         const char* error = C3D_getStartupError(session->renderer);
@@ -631,6 +648,7 @@ typedef struct {
 #endif
     float frameRate;
     u64 lastFrameStartTick;
+    u32 dialogDismissButtons;
 } N3DSApplication;
 
 static bool n3ds_appInitCitro(void) {
@@ -691,6 +709,7 @@ static void n3ds_appResetFrameState(N3DSApplication* app, bool showDebugMonitor)
     app->frameRate = n3ds_appGetRoomFrameRate(app->session.runner);
     if (app->citroReady) C3D_FrameRate(60.0f);
     app->lastFrameStartTick = 0u;
+    app->dialogDismissButtons = 0u;
 }
 
 static void n3ds_appBeginFrame(N3DSApplication* app, Runner* runner, N3DSOverlayTimings* timing) {
@@ -722,6 +741,9 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
     hidScanInput();
     u32 held = hidKeysHeld();
     u32 down = hidKeysDown();
+    app->dialogDismissButtons &= held;
+    held &= ~app->dialogDismissButtons;
+    down &= ~app->dialogDismissButtons;
     if ((held & KEY_START) && (held & KEY_SELECT) && (down & (KEY_START | KEY_SELECT))) {
         C3D_endDrawFrame(app->session.renderer);
         return false;
@@ -855,6 +877,16 @@ static bool n3ds_appRunFrame(N3DSApplication* app) {
     bool gameChanged = false;
     if (!n3ds_appHandleGameChange(app, runner, &gameChanged)) return false;
     if (!gameChanged) {
+        // Launch native applets only after FrameEnd and room/restart processing.
+        // Citro3D's APT hooks wait for GPU work and restore its state on return.
+        if (!runner->shouldExit && Runner_processStringDialog(runner)) {
+            app->lastFrameStartTick = 0u; // Exclude time spent in the applet from delta_time.
+            hidScanInput();
+            app->dialogDismissButtons = hidKeysHeld();
+#if N3DS_HAS_BOTTOM_TARGET
+            app->bottomScreenDisabledNeedsClear = true;
+#endif
+        }
         RunnerKeyboard_beginFrame(runner->keyboard);
         RunnerGamepad_beginFrame(runner->gamepads);
     }

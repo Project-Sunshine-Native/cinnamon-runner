@@ -393,6 +393,18 @@ typedef struct {
     int32_t error;     // posted as "error"; always 0 here (matches the native runner)
 } AsyncSaveLoadCompletion;
 
+typedef struct {
+    int32_t requestId;
+    char* prompt;
+    char* defaultText;
+} AsyncStringDialogRequest;
+
+typedef struct {
+    int32_t requestId;
+    bool accepted;
+    char* text;
+} AsyncStringDialogResult;
+
 // Motion planning grid used by mp_grid_* builtins. Cell value 1 = blocked.
 typedef struct {
     bool inUse;
@@ -759,6 +771,9 @@ struct Runner {
     void (*setWindowTitle)(const char* title);
     bool (*getWindowSize)(int32_t* outW, int32_t* outH);
     void (*setWindowSize)(int32_t width, int32_t height);
+    // Called between frames by Runner_processStringDialog. Returns owned UTF-8,
+    // or nullptr on cancellation/failure. Native applets may suspend the game.
+    char* (*getStringInput)(const char* prompt, const char* defaultText);
     bool (*getWindowPosition)(int32_t* outX, int32_t* outY);
     void (*setWindowPosition)(int32_t x, int32_t y);
     bool (*windowHasFocus)(void);
@@ -880,6 +895,9 @@ struct Runner {
     // Async map ID
     int32_t asyncLoadMapId;
     int32_t eventDataMapId;
+    AsyncStringDialogRequest* asyncStringDialogRequests;
+    AsyncStringDialogResult* asyncStringDialogResults;
+    int32_t asyncDialogNextRequestId;
 
     // Async buffer save/load state
     char* asyncBufferGroupName;                   // current group name (nullptr when no group is open); applied as a directory prefix
@@ -891,7 +909,6 @@ struct Runner {
     // Pending Xbox One account-picker async result.
     int32_t xboxAccountPickerPendingId; // -1 when nothing is pending
     int32_t xboxAccountPickerPadIndex; // pad index reported back in the async map
-    int32_t xboxAsyncIdCounter; // hands out a unique async id per picker call
 
     // Legacy GMS 1.x globals
     GMLReal score;
@@ -955,6 +972,10 @@ void Runner_setHealth(Runner* runner, GMLReal value);
 void Runner_draw(Runner* runner);
 void Runner_drawInstance(Runner* runner, Instance* inst);
 void Runner_broadcastMessage(Runner* runner, const char* type, const char* message, int32_t elementId);
+int32_t Runner_requestStringAsync(Runner* runner, const char* prompt, const char* defaultText);
+// Platform mains must call this outside a GPU frame. Processes at most one
+// request; the result is dispatched by Runner_step, after this function returns.
+bool Runner_processStringDialog(Runner* runner);
 // Ensures the application_surface exists at the right size, mirrors the renderer's ID into runner+renderer state, then
 // invokes renderer->vtable->beginFrame. Every platform main should call this instead of beginFrame directly.
 void Runner_beginFrame(Runner* runner, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH, int32_t framebufferW, int32_t framebufferH);

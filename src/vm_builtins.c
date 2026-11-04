@@ -4963,12 +4963,22 @@ static RValue builtin_os_get_region(MAYBE_UNUSED VMContext* ctx, MAYBE_UNUSED RV
 
 STUB_RETURN_FALSE(os_is_paused)
 
+static RValue builtin_get_string_async(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("get_string_async", 2, RValue_makeReal(-1));
+    char* prompt = RValue_toString(args[0], ctx->runner->dataWin);
+    char* defaultText = RValue_toString(args[1], ctx->runner->dataWin);
+    int32_t requestId = Runner_requestStringAsync(ctx->runner, prompt, defaultText);
+    free(prompt);
+    free(defaultText);
+    return RValue_makeReal((GMLReal)requestId);
+}
+
 // ===[ XBOX ONE FUNCTIONS ]===
 
 // xboxone_show_account_picker(pad_index, flags): shows the Xbox account picker (async).
 static RValue builtin_xboxone_show_account_picker(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
     Runner* runner = ctx->runner;
-    int32_t asyncId = runner->xboxAsyncIdCounter++;
+    int32_t asyncId = runner->asyncDialogNextRequestId++;
     runner->xboxAccountPickerPendingId = asyncId;
     runner->xboxAccountPickerPadIndex = (argCount > 0) ? (int32_t) RValue_toReal(args[0]) : 0;
     return RValue_makeReal((GMLReal) asyncId);
@@ -24819,6 +24829,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
 
     // OS
     VM_registerBuiltin(ctx, "os_get_language", builtin_os_get_language);
+    VM_registerBuiltin(ctx, "get_string_async", builtin_get_string_async);
     VM_registerBuiltin(ctx, "os_get_region", builtin_os_get_region);
     VM_registerBuiltin(ctx, "os_is_paused", builtin_os_is_paused);
 
