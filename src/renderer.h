@@ -194,6 +194,8 @@ typedef struct {
     void (*drawSpriteTiled)(Renderer* renderer, int32_t tpagIndex, float originX, float originY, float x, float y, float xscale, float yscale, bool tileX, bool tileY, float roomW, float roomH, uint32_t color, float alpha);
     // Surface Functions
     int32_t (*createSurface)(Renderer* renderer, int32_t width, int32_t height);
+    // Optional named surface creation; other backends use a regular surface.
+    int32_t (*createSurfaceExt)(Renderer* renderer, int32_t width, int32_t height, const char* name);
     bool (*surfaceExists)(Renderer* renderer, int32_t surfaceID);
     // Bind the given surface as the active render target. Pass renderer->runner->applicationSurfaceId to bind the application surface.
     // implicitApplicationSurface is only valid if the surfaceID is the runner->applicationSurfaceId, it means that it was implicitly set (example: stack was empty) instead of explicitly (example: GML code using surface_set_target(application_surface))
@@ -351,6 +353,14 @@ static inline void Renderer_drawSpritePos(Renderer* renderer, int32_t spriteInde
 static inline int32_t Renderer_createSurface(Renderer* renderer, int32_t width, int32_t height) {
     //if (0 > width)  (0 > height) return;
     return renderer->vtable->createSurface(renderer, width, height);
+}
+
+static inline int32_t Renderer_createSurfaceExt(Renderer* renderer, int32_t width,
+    int32_t height, const char* name) {
+    if (width <= 0 || height <= 0) return -1;
+    if (renderer->vtable->createSurfaceExt != nullptr)
+        return renderer->vtable->createSurfaceExt(renderer, width, height, name);
+    return Renderer_createSurface(renderer, width, height);
 }
 
 static inline bool Renderer_surfaceExists(Renderer* renderer, int32_t surfaceIndex) {

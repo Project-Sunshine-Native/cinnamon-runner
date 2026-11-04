@@ -23,6 +23,10 @@
 #define N3DS_MAX_TEXTURE_SIZE 1024
 #define N3DS_MAX_APPLICATION_SURFACE_WIDTH 640
 #define N3DS_MAX_APPLICATION_SURFACE_HEIGHT 480
+// The display engine cannot convert a tiled 16-bit source to RGB8: the transfer
+// never signals completion on hardware. Keep host targets RGBA8; surfaces may
+// still use RGBA4 and are sampled by the GPU before this final display transfer.
+// https://www.3dbrew.org/wiki/GPU/External_Registers#Tiled_to_linear
 #define N3DS_TRANSFER_FLAGS                                                                        \
     (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |               \
         GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |                                             \
@@ -4065,6 +4069,16 @@ static int32_t C3D_createSurface(Renderer* base, int32_t width, int32_t height) 
     return C3D_createSurfaceStorage(base, width, height, true);
 }
 
+static int32_t C3D_createSurfaceExt(Renderer* base, int32_t width, int32_t height, const char* name) {
+    if (name == NULL || strcmp(name, "cinnamonBottomSurface") != 0)
+        return C3D_createSurface(base, width, height);
+    // This is a user surface: keep its full 320x240 size even with APPSURFACE-HALF.
+    int32_t surfaceID = C3D_createSurfaceStorageEx(
+        base, width, height, width, height, true, GPU_RGBA4, true, true);
+    if (surfaceID >= 0) ((N3DSRenderer*)base)->bottomSurfaceId = surfaceID;
+    return surfaceID;
+}
+
 static bool C3D_surfaceIdIsLive(const N3DSRenderer* renderer, int32_t surfaceID) {
     return surfaceID >= 0 && (uint32_t)surfaceID < renderer->surfaceCount &&
         renderer->surfaces[surfaceID].used && !renderer->surfaces[surfaceID].pendingFree;
@@ -5848,6 +5862,7 @@ static RendererVtable gN3DSRendererVtable = {
     .getTilemapDrawBounds = C3D_getTilemapDrawBounds,
     .drawSpriteTiled = C3D_drawTiled,
     .createSurface = C3D_createSurface,
+    .createSurfaceExt = C3D_createSurfaceExt,
     .surfaceExists = C3D_surfaceExists,
     .setRenderTarget = C3D_setRenderTarget,
     .ensureApplicationSurface = C3D_ensureAppSurface,
@@ -6024,6 +6039,7 @@ void C3D_presentBottomSurface(MAYBE_UNUSED Renderer* renderer) {
         return;
     }
 
+    C3D_beginSurfaceCopyState(n3ds);
     C3D_beginBottomGUIImpl(
         renderer, N3DS_BOTTOM_WIDTH, N3DS_BOTTOM_HEIGHT, true);
     renderer->vtable->drawSurface(renderer, surfaceID, 0, 0, width, height, 0.0f, 0.0f,
