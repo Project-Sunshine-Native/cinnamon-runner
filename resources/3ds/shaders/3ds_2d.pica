@@ -1,0 +1,41 @@
+.fvec uProjMtx[4]
+.fvec uTexelBias
+
+.constf c0(0.0, 1.0, 0.5, 0.003921568627)
+.alias zero c0.x
+.alias one c0.y
+.alias half c0.z
+.alias inv255 c0.w
+
+.out outpos position
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+.out outclr color
+
+.alias inpos v0
+.alias intex v1
+.alias inclr v2
+
+.proc main
+    mov r0.x, inpos.x
+    mov r0.y, inpos.y
+    mov r0.z, half
+    mov r0.w, one
+
+    dp4 outpos.x, uProjMtx[0], r0
+    dp4 outpos.y, uProjMtx[1], r0
+    dp4 outpos.z, uProjMtx[2], r0
+    dp4 outpos.w, uProjMtx[3], r0
+
+    add r2.xy, uTexelBias.xy, intex.xy
+    mov outtc0.xy, r2.xy
+    mov outtc0.zw, zero
+    mov outtc1.xy, r2.xy
+    mov outtc1.zw, zero
+    mov outtc2.xy, r2.xy
+    mov outtc2.zw, zero
+    mov r1, inv255
+    mul outclr, r1, inclr
+    end
+.end

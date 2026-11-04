@@ -1,0 +1,97 @@
+#ifndef _BS_WII_GAMEPAD_H_
+#define _BS_WII_GAMEPAD_H_
+
+#include "../runner_gamepad.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define WII_INPUT_CONTROLLER_COUNT 4u
+
+typedef enum {
+    WII_CONTROLLER_WIIMOTE = 0,
+    WII_CONTROLLER_CLASSIC,
+    WII_CONTROLLER_GAMECUBE,
+} WiiControllerKind;
+
+enum {
+    WII_WIIMOTE_DPAD_LEFT = 0,
+    WII_WIIMOTE_DPAD_DOWN,
+    WII_WIIMOTE_DPAD_UP,
+    WII_WIIMOTE_DPAD_RIGHT,
+    WII_WIIMOTE_A,
+    WII_WIIMOTE_PLUS,
+    WII_WIIMOTE_MINUS,
+    WII_WIIMOTE_ONE,
+    WII_WIIMOTE_TWO,
+    WII_WIIMOTE_B,
+    WII_WIIMOTE_MAPPING_COUNT,
+};
+
+enum {
+    WII_CLASSIC_DPAD_LEFT = 0,
+    WII_CLASSIC_DPAD_DOWN,
+    WII_CLASSIC_DPAD_UP,
+    WII_CLASSIC_DPAD_RIGHT,
+    WII_CLASSIC_LEFT_STICK_LEFT,
+    WII_CLASSIC_LEFT_STICK_DOWN,
+    WII_CLASSIC_LEFT_STICK_UP,
+    WII_CLASSIC_LEFT_STICK_RIGHT,
+    WII_CLASSIC_RIGHT_STICK_LEFT,
+    WII_CLASSIC_RIGHT_STICK_DOWN,
+    WII_CLASSIC_RIGHT_STICK_UP,
+    WII_CLASSIC_RIGHT_STICK_RIGHT,
+    WII_CLASSIC_A,
+    WII_CLASSIC_B,
+    WII_CLASSIC_X,
+    WII_CLASSIC_Y,
+    WII_CLASSIC_MINUS,
+    WII_CLASSIC_PLUS,
+    WII_CLASSIC_L,
+    WII_CLASSIC_R,
+    WII_CLASSIC_ZL,
+    WII_CLASSIC_ZR,
+    WII_CLASSIC_MAPPING_COUNT,
+};
+
+enum {
+    WII_GAMECUBE_DPAD_LEFT = 0,
+    WII_GAMECUBE_DPAD_DOWN,
+    WII_GAMECUBE_DPAD_RIGHT,
+    WII_GAMECUBE_DPAD_UP,
+    WII_GAMECUBE_LEFT_STICK_LEFT,
+    WII_GAMECUBE_LEFT_STICK_DOWN,
+    WII_GAMECUBE_LEFT_STICK_UP,
+    WII_GAMECUBE_LEFT_STICK_RIGHT,
+    WII_GAMECUBE_CSTICK_LEFT,
+    WII_GAMECUBE_CSTICK_DOWN,
+    WII_GAMECUBE_CSTICK_UP,
+    WII_GAMECUBE_CSTICK_RIGHT,
+    WII_GAMECUBE_A,
+    WII_GAMECUBE_B,
+    WII_GAMECUBE_X,
+    WII_GAMECUBE_Y,
+    WII_GAMECUBE_LEFT_TRIGGER,
+    WII_GAMECUBE_RIGHT_TRIGGER,
+    WII_GAMECUBE_Z,
+    WII_GAMECUBE_MAPPING_COUNT,
+};
+
+typedef struct {
+    bool wiimoteSideways;
+    int32_t wiimote[WII_WIIMOTE_MAPPING_COUNT];
+    int32_t classic[WII_CLASSIC_MAPPING_COUNT];
+    int32_t gamecube[WII_GAMECUBE_MAPPING_COUNT];
+} WiiControllerMappingSettings;
+
+typedef struct {
+    WiiControllerKind controllerKind[WII_INPUT_CONTROLLER_COUNT];
+    WiiControllerMappingSettings controller[WII_INPUT_CONTROLLER_COUNT];
+} WiiGamepadConfig;
+
+void WiiPad_poll(RunnerGamepadState* gamepads, bool* keyboardDesired, bool* outHomePressed,
+    const WiiGamepadConfig* config);
+
+void WiiPadCfg_init(WiiGamepadConfig* config);
+
+#endif

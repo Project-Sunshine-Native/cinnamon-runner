@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<app version="1">
+  <name>Cinnamon</name>
+  <coder>Grayforz2468</coder>
+  <version>0.5</version>
+  <release_date>20260905000000</release_date>
+  <short_description>GameMaker runner</short_description>
+  <long_description>
+	Wii port of the open source GameMaker runner based off Butterscotch.
+  </long_description>
+  <ahb_access/>
+</app>

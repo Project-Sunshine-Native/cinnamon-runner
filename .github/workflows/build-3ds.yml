@@ -1,0 +1,36 @@
+name: 3DS build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-3ds:
+    name: Build (Nintendo 3DS)
+    runs-on: ubuntu-24.04
+    container:
+      image: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain and portlibs
+        run: dkp-pacman -Syu --needed --noconfirm 3ds-dev 3ds-libvorbisidec 3ds-libogg
+
+      - name: Configure
+        run: cmake --preset 3ds
+
+      - name: Build
+        run: cmake --build --preset 3ds
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinnamon-3ds
+          path: |
+            build/3dsx/cinnamon.elf
+            build/3dsx/cinnamon.3dsx
+            build/3dsx/cinnamon.cia
+          if-no-files-found: error

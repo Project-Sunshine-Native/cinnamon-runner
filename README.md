@@ -1,425 +1,140 @@
-<div align="center">
-<img width="256" height="256" alt="Butterscotch Logo" src="https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" />
-</div>
+<h1 align="center">Cinnamon</h1>
 
-<h1 align="center">🥧 Butterscotch 🥧</h1>
 
-<!-- Badges, about the GitHub repository itself -->
+</p>
 <p align="center">
-<a href="https://github.com/ButterscotchRunner/CompatibilityList"><img src="https://img.shields.io/badge/butterscotch-compatibility_list-green"></a>
-<a href="https://discord.gg/2gQR7t3WJR"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
+    <a href="https://discord.gg/undertale3ds"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
 </p>
 
-## Table of Contents
-* [Game Compatibility](#game-compatibility)
-* [Supported Platforms](#supported-platforms)
-* [Download Butterscotch](#download-butterscotch)
-  * [Desktop](#desktop)
-  * [Consoles](#consoles)
-  * [Other](#other)
-* [Community Ports](#community-ports)
-* [Building Butterscotch](#building-butterscotch)
-* [CLI parameters](#cli-parameters)
-* [Debug Features](#debug-features)
-* [Performance](#performance)
-* [Then why not have a transpiler?](#then-why-not-have-a-transpiler)
-* [Screenshots](#screenshots)
-* [PS2 Videos](#ps2-videos)
-* [Similar Projects](#similar-projects)
-* [Disclaimer](#disclaimer)
-
-> [!IMPORTANT]
-> Butterscotch may have quirks that the original GameMaker: Studio runner may not have!
-
-When you create a game in GameMaker: Studio and export it, GameMaker: Studio exports the game code as bytecode instead of native compiled code, and that bytecode is compatible with any other GameMaker: Studio runner (also known as YoYo runner), as long as they have matching GameMaker: Studio versions. This is similar to how Java applications work.
-
-This is how projects such as [Droidtale](https://mrpowergamerbr.com/projects/droidtale) (which was also made by yours truly) can exist. We exploit that GameMaker: Studio games compile to bytecode, which means they can be ran on *any* platform that has an official runner for it!
-
-Ever since I created Droidtale 10+ years ago, I had that lingering thought in my mind... If GameMaker games use bytecode, what prevents us from creating our *own* runner? And if we can write our *own* runner, what prevents us from porting GameMaker: Studio games to other platforms?
-
-And that's where Butterscotch comes in! Butterscotch is an open source re-implementation of GameMaker: Studio's runner in C.
+---
+Cinnamon is a fork of the Butterscotch GameMaker runner specifically targeting the Nintendo 3DS, Wii, and Wii U
 
 ## Game Compatibility
 
-Butterscotch's goal is to be able to have all bytecode compiled games playable. The majority of GameMaker: Studio games already get in game and some are even playable from start to finish! For a more complete list of working games, check the [Compatibility List.](https://github.com/ButterscotchRunner/CompatibilityList)
+Cinnamon's goal is to be able to have most GameMaker games fully playable. 
 
-Butterscotch supports the following WAD versions:
+Of course, there are hardware limitations. These are consoles that are more than a decade old and while Cinnamon is heavily optimized, games with heavy 3D or heavy particle systems may run poorly or not run at all.
 
-* WAD Version 8 (GameMaker: Studio 1.0.198+)
-* WAD Version 9 (GameMaker: Studio 1.0.527+)
-* WAD Version 10 (GameMaker: Studio 1.1.609+)
-* WAD Version 11 (GameMaker: Studio 1.1.754+)
-* WAD Version 12 (GameMaker: Studio 1.1.867+)
-* WAD Version 13 (GameMaker: Studio 1.1.917+)
-* WAD Version 14 (GameMaker: Studio 1.4.1464+)
-* WAD Version 15 (GameMaker: Studio 1.4.1675+)
-* WAD Version 16 (GameMaker: Studio 1.4.1767+)
-* WAD Version 17 (GameMaker: Studio 2.2+)
+Here are the Bytecode Versions that Cinnamon currently supports
 
-Other modding tools, such as UndertaleModTool, calls it "bytecode version" instead of "WAD version". We decided to go with WAD version instead because there are GameMaker: Studio versions (WAD version 6 and 7) that DO NOT use bytecode altogether, so calling it "bytecode version" is not quite correct, and because that's what the YoYo Runner calls it under the hood.
+* Bytecode Version 16
+* Bytecode Version 17
 
-However, that doesn't mean that a game that uses a compatible version WILL run! The bytecode support is still a WIP, and Butterscotch may have quirks that the original GameMaker: Studio runner may not have.
+Of course, there are exceptions that break game compatibility altogether:
 
-Of course, some games won't run! Some games aren't VM compiled, such as:
-
-* Games compiled with YYC, because they use native code instead of bytecode. (Ex: Forager, Rivals of Aether)
+* Games compiled with YYC, because they use native code instead of bytecode. 
 * Games compiled with the new [GMRT](https://github.com/YoYoGames/GMRT-Beta/tree/main), because they use native code instead of bytecode.
-* Games before GameMaker: Studio 1.0.198 (pre-WAD version 8) because they use raw GML code interpreted on load.
-
-Some games may also have issues if they use an *external extension* for stuff like Discord or shaders! (FMOD is the only implemented extension!)
+  
+This includes games like Forager, Hyperlight Drifter, and more. 
 
 ## Supported Platforms
+* Nintendo 3DS
+* Nintendo Wii U
+* Nintendo Wii
+* ...and maybe more Nintendo consoles in the future!
 
-* Windows
-* macOS
-* Web
-* PlayStation 2
-* PlayStation 3
-* PlayStation Vita
-* Nintendo Switch
-* LG webOS
-* ...and maybe more in the future!
+Cinnamon was made for Project Sunshine's ports.
 
-Butterscotch can be ported to about any console that has the processing power to run it! Butterscotch has already been ported to many consoles such as the Xbox 360, Wii, 3DS, and more!
+## Project Sunshine
+* Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, Wii, GameCube, and maybe more consoles in the future! You can get beta builds on our [Discord](https://discord.gg/undertale3ds) aswell as news on the ports.
+### UNDERTALE: Wii U Edition
+* A released, full port of UNDERTALE on the Wii U. You can download this port on our releases page or on our Discord.
+### DELTARUNE: Wii U Edition
+* A full port of DELTARUNE Chapters 1-5 to the Wii U. Still currently in development.
+### UNDERTALE: 3DS Edition
+* A full port of UNDERTALE to the 3DS with 3DS exclusive features such as 3D and bottom screen features.
+### DELTARUNE: 3DS Edition
+* A full port of DELTARUNE Chapters 1-5 to the old and new 3DS.
+### UNDERTALE: Wii Edition
+* A full port of UNDERTALE to the Wii.
+### DELTARUNE Wii Edition
+* A full port of DELTARUNE to the Wii.
+### UNDERTALE: GameCube Edition
+* A full port of UNDERTALE to the GameCube.
+### DELTARUNE GameCube Edition
+* A full port of DELTARUNE Chapter 1 to the GameCube.
 
-Additionally, any platform with reasonably complete C and POSIX conformance should work, the following have been tested.
-* Linux distributions dating back to around ~1995 (glibc and musl libc tested working)
-* FreeBSD as old as 2.2.8
-* OpenBSD
-* NetBSD
-* Haiku
-* Solaris/illumos (OpenIndiana tested working)
+## Building
+Before proceeding, ensure you have a proper devkitpro environment set up for your platform
 
-The following backends are available for desktop platforms (Windows and POSIX systems).
-* GLFW 2
-* GLFW 3
-* SDL 1.2
-* SDL 2
-* SDL 3
-* AppKit (macOS only)
+### Building For 3DS
 
-The following compilers have been tested to successfully build Butterscotch, older versions may work but are untested.
-* GCC 2.7 and up in C++ mode, and 3.0 and up in C99 mode
-* Clang 1.1 and up
-* TinyCC 0.9.27 and up
-* MSVC 4.0 and up
-
-## Download Butterscotch
-
-Below are direct links to download the latest auto-build of Butterscotch for your platform.
-
-### Desktop
-
-| OS | x86_64 | i386 | arm64 | armhf | PowerPC | PowerPC64 | PowerPC64 little-endian | RISC-V 64 | LoongArch64 | MIPS | MIPS little-endian | MIPS64 | MIPS64 little-endian |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Windows | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-windows-x86_64.zip) | [i486](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-windows-i486.zip) | [arm64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-sdl2-windows-arm64.zip) | [armv7](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-sdl2-windows-armv7.zip) | | | | | | | | | |
-| macOS | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-appkit-macos-x86_64.zip) | | [arm64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-appkit-macos-arm64.zip) | | | | | | | | | | |
-| Linux | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-amd64.zip) | [i486](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-i486.zip) | [aarch64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-aarch64.zip) | [arm](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-arm.zip) | [powerpc](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-powerpc.zip) | [powerpc64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-powerpc64.zip) | [powerpc64le](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-powerpc64le.zip) | [riscv64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-riscv.zip) | [loongarch64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-loongarch64.zip) | [mips](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-mips.zip) | [mipsel](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-mipsel.zip) | [mips64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-mips64.zip) | [mips64el](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-mips64el.zip) |
-| FreeBSD 14.0 | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-amd64.zip) | [i486](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-i486.zip) | [aarch64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-aarch64.zip) | [arm](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-arm.zip) | | [powerpc64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-powerpc64.zip) | [powerpc64le](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-powerpc64le.zip) | [riscv64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-FreeBSD-riscv.zip) | | | | | |
-| OpenBSD 7.8 | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-amd64.zip) | [i486](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-i486.zip) | [aarch64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-aarch64.zip) | [arm](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-arm.zip) | [powerpc](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-powerpc.zip) | [powerpc64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-powerpc64.zip) | | [riscv64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-riscv.zip) | | | | [mips64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-mips64.zip) | [mips64el](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-OpenBSD-mips64el.zip) |
-| NetBSD 11.0* | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-amd64.zip) | [i486](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-i486.zip) | [aarch64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-aarch64.zip) | [arm](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-riscv.zip) | | | | [riscv64*](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-amd64.zip) | | [mips](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-mips.zip) | [mipsel](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-NetBSD-mipsel.zip) | | |
-| Haiku | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-sdl2-haiku-x86-64.zip) | | | | | | | | | | | | |
-| illumos (i.e. OpenIndiana) | [x86_64](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-sdl2-illumos-x86-64.zip) | | | | | | | | | | | | |
-
-All desktop builds use SDL2, with the exception of Mac OS using AppKit and i486 Windows using SDL 1.2.
-
-All RISC architecture (ARM, MIPS, PowerPC, RISC-V) builds require hardware floating-point support.
-
-MIPS big-endian builds do not have ffmpeg compiled in and won't work with functions like `video_open`.
-
-### Consoles
-
-| Platform | Download | Notes |
-|---|---|---|
-| PlayStation 2 | [butterscotch-ps2.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-ps2.zip) | All WAD versions. Has worse performance compared to WAD-specific ELFs due to more code bloat on the interpreter hot path. ELF executable to be used with the [ISO generator](https://butterscotch.mrpowergamerbr.com/). |
-| PlayStation 2 | [butterscotch-ps2-wad14.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-ps2-wad14.zip) | WAD 14 only. ELF executable to be used with the [ISO generator](https://butterscotch.mrpowergamerbr.com/). |
-| PlayStation 2 | [butterscotch-ps2-wad16.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-ps2-wad16.zip) | WAD 16 only. ELF executable to be used with the [ISO generator](https://butterscotch.mrpowergamerbr.com/). |
-| PlayStation 2 | [butterscotch-ps2-wad17.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-ps2-wad17.zip) | WAD 17 only. ELF executable to be used with the [ISO generator](https://butterscotch.mrpowergamerbr.com/). |
-| PlayStation 3 | [butterscotch-ps3.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-ps3.zip) | To be used with the [preprocessor](https://github.com/ButterscotchRunner/ButterscotchPreprocessor). |
-| PlayStation Vita | [butterscotch-vita.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-vita.zip) | Place data.win in `ux0:/data/butterscotch/` directory. Requires `libshacccg.suprx` to be installed in `ur0:/data/` |
-| Nintendo Switch | [butterscotch-switch.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-switch.zip) | Place data.win in `sdmc:/switch/butterscotch/` directory OR compile from source with data.win file in `<cmake build dir>/romfs` directory (requires devkitPro). |
-
-
-### Other
-
-| Platform | Download | Notes |
-| -------- | -------- | ----- |
-| WebAssembly | [butterscotch-web.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-web.zip) | [Play online](https://butterscotch.mrpowergamerbr.com/web/) |
-| Android | [butterscotch-android.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-android.zip) | <a href="https://play.google.com/store/apps/details?id=net.perfectdreams.butterscotch&referrer=utm_source%3Dgithub%26utm_medium%3Dreferral%26utm_content%3Dgithub-readme"><img width="159" height="47" alt="GetItOnGooglePlay_Badge_Web_color_English" src="https://github.com/user-attachments/assets/c6be56cb-68ca-41d6-b479-3bf2a95f0ba6" /></a></div> |
-| webOS | [butterscotch-webos.zip](https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/butterscotch-webos.zip) | After installing the IPK, place the game's `data.win` and other required files in `/media/developer/apps/usr/palm/applications/com.mrpowergamerbr.butterscotch/` |
-
-## Community Ports
-
-* [Xbox 360 (Butterscotch-360)](https://github.com/ceilingtilefan/Butterscotch-360) by @ceilingtilefan
-* [3DS, Wii and Wii U (Cinnamon)](https://github.com/Project-Sunshine-Native/cinnamon) by @casrielasriel, @grayforz24682
-
-## Building Butterscotch
+Install the SDK and audio libraries:
 
 ```bash
-mkdir build && cd build
-cmake -DBACKEND=glfw3 -DCMAKE_BUILD_TYPE=Debug ..
-make
+sudo dkp-pacman -Syu --needed 3ds-dev 3ds-libvorbisidec 3ds-libogg 
+```
+then build:
+
+```bash
+cmake --preset 3ds
+cmake --build --preset 3ds
 ```
 
-If you are using CLion, set the platform in `Settings` > `Build, Execution, Deployment` > `CMake` and add `-DBACKEND=glfw3`
+Outputs:
 
-Then run Butterscotch with `./butterscotch` - it will automatically search for `data.win`, `assets/game.unx`, `assets/game.droid` or `../Resources/game.ios` relative to the binary, otherwise you can specify a path with `./butterscotch /path/to/data.win`.
+- `build/3dsx/cinnamon.3dsx`: executable for the Homebrew Launcher.
+- `build/3dsx/cinnamon.cia`: installable CIA for launching from the home screen.
 
-## CLI parameters
+This builds the standard Release configuration with games loaded from the SD
+card. For installing games, see [the preprocessor](https://github.com/Project-Sunshine-Native/cinnamon-preprocessor)
 
-The desktop target has a lot of nifty CLI parameters that you can use to trace and debug games running on it.
+### Building for Wii
 
+Install the SDK and audio libraries:
+
+```bash
+sudo dkp-pacman -Syu --needed wii-dev ppc-libvorbisidec ppc-libogg
 ```
---help                                 - Show this message
---screenshot <filename>                - Specify the filename for screenshots
---screenshot-at-frame <frame>          - Take a screenshot at the specified frame
---screenshot-surfaces <filename>       - Take a screenshot of all surfaces at the specified frame
---screenshot-surfaces-at-frame <frame> - Specify the filename for surface screenshots
---headless                             - Launch without a window
---print-rooms                          - Print all rooms in the game and exit
---print-objects                        - Print all objects in the game and exit
---print-shaders                        - Print all shaders in the game and exit
---print-declared-functions             - Print all declared functions in the game and exit
---print-unknown-functions              - Print all unknown functions used by the game and exit
---trace-variable-reads                 - Trace variable reads
---trace-variable-writes                - Trace variable writes
---trace-function-calls                 - Trace function calls
---trace-alarms                         - Trace alarms
---trace-instance-lifecycles            - Trace instance creations and deletions
---trace-events                         - Trace events
---trace-collisions                     - Trace collisions between instances
---trace-event-inherited                - Trace event inherited calls
---trace-tiles                          - Trace drawn tiles
---trace-opcodes                        - Trace opcodes
---trace-stack                          - Trace stack
---trace-frames                         - Log frametimes
---always-log-unknown-functions         - Always log unknown function calls instead of once per script
---always-log-stubbed-functions         - Always log stubbed function calls instead of once per script
---exit-at-frame <frame>                - Exit at the specified frame
---trace-bytecode-after-frame <frame>   - Delay stack and opcode tracing until the specified frame
---dump-frame <frame>                   - Dump the runner state at the specified frame
---dump-frame-json <frame>              - Dump the runner state in json at the specified frame
---dump-frame-json-file <file>          - Specify an output file for runner state dumps
---speed <speed>                        - Set a normal speed multiplier
---fast-forward-speed <speed>           - Set a fast-forward speed multiplier
---seed <seed>                          - Seed for the random number generator
---debug                                - Enable debug mode
---disassemble <script>                 - Disassemble the specified script and print to console (\* disassembles all)
---record-inputs <file>                 - Record all keyboard inputs to a file
---playback-inputs <file>               - Playback input from file
---renderer <renderer>                  - Set the rendering API
---lazy-rooms                           - Lazily load rooms, increases load times but reduces memory usage
---eager-room <rooms>                   - When --lazy-rooms is set, keep these rooms always in memory
---os-type <os>                         - Set the reported OS type
---window-size <dimentions>             - Set a custom window size
---widescreen-hack <aspect ratio>       - Set a custom aspect ratio
---profile-gml-scripts                  - Log which GML scripts are the heaviest in terms of time and executed instructions
---save-folder <directory>              - Set the directory will save files will be stored
---game-args <args>                     - Arguments to pass to the game
---profile-opcodes                      - Rank which GML opcodes were executed the most
---lazy-textures                        - Load textures into VRAM on first use, improving startup times
---load-type <type>                     - Specify how data.win is loaded, per-chunk or all at once
---disable-log-colours                  - Disable colours for warning, error, and debug logs
---disable-log-colors                   - Same as --disable-log-colours, but different spelling
+then build:
+
+```bash
+cmake --preset wii
+cmake --build --preset wii
 ```
 
-## Debug Features
+Outputs:
 
-When running Butterscotch with `--debug`, the following hotkeys are enabled:
+- `build/wii/boot.dol`: executable for the Homebrew Channel.
+- `build/wii/boot.elf`: ELF executable.
+- `build/wii/icon.png`: Homebrew Channel icon.
+- `build/wii/meta.xml`: Homebrew Channel metadata.
 
-* `Page Up`: Moves forward one room
-* `Page Down`: Moves backwards one room
-* `P`: Pauses the game
-* `O`: While paused, advances the game loop by one frame
-* `F12`: Dumps the current runner state to the console
-* `F11`: Dumps the current runner state to the console (JSON format), or dumps it to a file if `--dump-frame-json-file` is set.
-* `F10`: Sets the `global.interact` flag to `0`. Useful in Undertale when you are moving through rooms and one of them starts a cutscene that doesn't let you move.
-
-## Performance
-
-Performance is pretty good on any modern computer, but when running on low end targets (like the PS2) it is *very* slow when there's a lot of instances on screen, or when a instance does a for loop.
-
-## Then why not have a transpiler?
-
-The issue with a transpiler is that, if you try transpiling the game in the "naive" way, that is, emitting VM calls like it was the original bytecode, you won't get any
-*improvement* from it, you would need to create a *good* transpiler that actually transpiles it into *good* code, and that's way harder.
-
-Having a transpiler also have other disadvantages:
-
-1. You lose the ability of debugging the runner at a "high level" by tracing opcodes.
-2. Compilation is SLOW, transpiling Undertale in a naive way to C and building it takes 90 seconds on a modern computer, and building it to other targets is so slow that I wasn't even able to test it.
-
-## Screenshots
-
-### Undertale (GLFW) [WAD Version 16]
-
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/6651cc2e-0d6d-4354-b98d-081e84a981df" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/1d6edc51-2829-4f8f-b900-393f21a6655b" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/0d41f16c-7ee5-47de-a2e8-5831cdcd2745" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/45dc47fb-6d8a-44d4-8cbb-2e5791100144" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/7db1c869-e625-4558-9119-0f23da0f020c" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/71fc7616-d580-48fe-aa6d-1e6ceea41bdb" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/4098936e-a1b9-4971-901d-702ec390afa7" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/dd3dcce3-3d78-452f-9af0-27133497650c" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/2e356d04-5aaf-47d4-9bc3-4abba78cd18d" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/a9cbc57f-e9c1-4985-a6af-a98e5fce5ff3" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/e5c67781-0ffc-43c8-9c7d-333254eed704" />
-<img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/93900e3c-79b5-4a05-bd6c-d68814e9e101" />
+Copy `boot.dol`, `icon.png`, and `meta.xml` into `/apps/cinnamon/` on the SD
+card, then launch Cinnamon from the Homebrew Channel. For installing games, see [the preprocessor](https://github.com/Project-Sunshine-Native/cinnamon-preprocessor)
 
 
+## Showcase
 
-### DELTARUNE Chapter 1 (GLFW) [WAD Version 17]
-<img width="160" height="120" alt="Screenshot_20261030_213335" src="https://github.com/user-attachments/assets/ee91954a-1bd2-4cbc-b018-98703f97b422" />
-<img width="160" height="120" alt="Screenshot_20261030_213407" src="https://github.com/user-attachments/assets/b9b9740a-f8db-47a5-bf7c-0ebfc0c10bfa" />
-<img width="160" height="120" alt="Screenshot_20261030_213502" src="https://github.com/user-attachments/assets/569ee6a8-bb76-4865-9e6d-3dd659a83a56" />
-<img width="160" height="120" alt="Screenshot_20261030_213533" src="https://github.com/user-attachments/assets/8fb90760-af04-49d2-a19a-d825b08ee3b1" />
-<img width="160" height="120" alt="Screenshot_20261030_213612" src="https://github.com/user-attachments/assets/075a84ed-89c0-4b45-b1db-9cca757db129" />
-<img width="160" height="120" alt="Screenshot_20261030_213623" src="https://github.com/user-attachments/assets/07e67894-7e8e-447b-aa8f-e104337b5b6c" />
-<img width="160" height="120" alt="Screenshot_20261030_214140" src="https://github.com/user-attachments/assets/636597b3-051e-4177-ac69-45d329fddf42" />
-<img width="160" height="120" alt="Screenshot_20261030_214210" src="https://github.com/user-attachments/assets/c25c2b76-5914-4b62-829f-529b44448732" />
-<img width="160" height="120" alt="Screenshot_20261030_214253" src="https://github.com/user-attachments/assets/00728393-356d-40d4-bd96-5c8efe66d1a3" />
+### Wii U (Real Hardware)
 
-### DELTARUNE Chapter 2 (GLFW) [WAD Version 17]
+- **UNDERTALE (Bytecode 16)**
+<img width="160" height="120" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/db8de335d5067d628d3bae1c90a705a57db3dbf9/resources/readme/screenshots/1000057247.jpg" />
+<img width="160" height="120" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/db8de335d5067d628d3bae1c90a705a57db3dbf9/resources/readme/screenshots/1000057245.jpg" />
+<img width="160" height="120" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/db8de335d5067d628d3bae1c90a705a57db3dbf9/resources/readme/screenshots/1000057243.jpg" />
 
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/d0df9858-ad2b-4642-9f32-a542d1d942e0" />
-<img width="160" height="120" alt="Screenshot_20261030_212524" src="https://github.com/user-attachments/assets/009342ce-7702-466a-8fb4-64dec3e07fa9" />
-<img width="160" height="120" alt="Screenshot_20261030_212614" src="https://github.com/user-attachments/assets/92640091-c421-4ca5-89be-b67d3f46f126" />
-<img width="160" height="120" alt="Screenshot_20261030_212626" src="https://github.com/user-attachments/assets/05c4966f-80c3-4ff4-8a9a-3a56f7dac5da" />
-<img width="160" height="120" alt="Screenshot_20261030_212651" src="https://github.com/user-attachments/assets/69150a70-ec88-47ab-a055-e6ca5dff4376" />
-<img width="160" height="120" alt="Screenshot_20261030_212705" src="https://github.com/user-attachments/assets/f210b7c6-181c-4424-8c99-e67cc40e5eaf" />
-<img width="160" height="120" alt="Screenshot_20261030_212801" src="https://github.com/user-attachments/assets/0ee06dbd-bf85-4173-beda-43e940923fc0" />
-<img width="160" height="120" alt="Screenshot_20261030_212856" src="https://github.com/user-attachments/assets/88130378-89e5-416a-9f5f-994d7945ca17" />
-<img width="160" height="120" alt="Screenshot_20261030_213025" src="https://github.com/user-attachments/assets/cc18cdbd-542a-4fe3-b5a5-7e4284c12a33" />
+- **SURVEY_PROGRAM (Bytecode 16)**
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/db8de335d5067d628d3bae1c90a705a57db3dbf9/resources/readme/screenshots/1000045789.jpg" />
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/db8de335d5067d628d3bae1c90a705a57db3dbf9/resources/readme/screenshots/1000057255.jpg" />
 
+### Wii U (Cemu/Emulator)
 
-### DELTARUNE Chapter 3 (GLFW) [WAD Version 17]
+- **SURVEY_PROGRAM (Bytecode 16)**
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/fe76737aea9d6402a55eb0059444c5283f88dff1/resources/readme/screenshots/1000057249.jpg" />
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/fe76737aea9d6402a55eb0059444c5283f88dff1/resources/readme/screenshots/1000057251.jpg" />
 
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/7b49d434-e66f-4ee3-bfe8-c0b4f45ceeb7" />
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/afbe62ad-4706-4882-a9c9-6c239ed57c69" />
-<img width="160" height="120" alt="Screenshot_20261030_211459" src="https://github.com/user-attachments/assets/66c7d979-cbd4-4b8d-bfde-53fd958fc62a" />
-<img width="160" height="120" alt="Screenshot_20261030_211511" src="https://github.com/user-attachments/assets/c7a61dc3-95c4-4d8c-a748-76f85a686b1f" />
-<img width="160" height="120" alt="Screenshot_20261030_211534" src="https://github.com/user-attachments/assets/84a63907-6887-4b18-a420-cdfc113fed71" />
-<img width="160" height="120" alt="Screenshot_20261030_211554" src="https://github.com/user-attachments/assets/e63ccce8-7c9b-4495-9b79-e1acc6cee611" />
-<img width="160" height="120" alt="Screenshot_20261030_211621" src="https://github.com/user-attachments/assets/00cff340-7120-4821-bf64-8c23b4deeeea" />
-<img width="160" height="120" alt="Screenshot_20261030_211053" src="https://github.com/user-attachments/assets/1ee883c4-435f-4177-ad7d-0c7cff396300" />
-<img width="160" height="120" alt="Screenshot_20261030_211122" src="https://github.com/user-attachments/assets/924ec8fc-edcc-4108-9cc7-e266a0883a4f" />
-<img width="160" height="120" alt="Screenshot_20261030_211151" src="https://github.com/user-attachments/assets/32685be1-bec5-4bfe-b76c-c6fe987a9ee2" />
-<img width="160" height="120" alt="Screenshot_20261030_211208" src="https://github.com/user-attachments/assets/07974b6e-2625-449a-8896-340251c44046" />
-<img width="160" height="120" alt="Screenshot_20261030_211311" src="https://github.com/user-attachments/assets/e723d262-03dc-4518-af09-14b89b3dd681" />
+- **Pizza Tower Demo (Demo 1, Sage 2019 Demo) (Bytecode 16)**
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/fe76737aea9d6402a55eb0059444c5283f88dff1/resources/readme/screenshots/1000057253.png" />
+<img width="160" height="200" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/fe76737aea9d6402a55eb0059444c5283f88dff1/resources/readme/screenshots/1000057254.png" />
 
+### 3DS (Real Hardware)
 
-### DELTARUNE Chapter 4 (GLFW) [WAD Version 17]
-<img width="160" height="120" alt="Screenshot_20261030_205625" src="https://github.com/user-attachments/assets/34606e1a-c0aa-474a-aae1-8810a702403c" />
-<img width="160" height="120" alt="Screenshot_20261030_205651" src="https://github.com/user-attachments/assets/61fd05d7-a037-4550-be8b-456ed360af62" />
-<img width="160" height="120" alt="Screenshot_20261030_205720" src="https://github.com/user-attachments/assets/7a59c9a8-c856-488e-ab53-da3767a07d2e" />
-<img width="160" height="120" alt="Screenshot_20261030_205853" src="https://github.com/user-attachments/assets/5979612e-df4b-4d98-baaf-55d8912e208e" />
-<img width="160" height="120" alt="Screenshot_20261030_205954" src="https://github.com/user-attachments/assets/c006c99d-ceff-456f-91c8-7bb6d1d519b4" />
-<img width="160" height="120" alt="Screenshot_20261030_210008" src="https://github.com/user-attachments/assets/d760348c-05e7-4138-b5d8-fe283cf4e588" />
-<img width="160" height="120" alt="Screenshot_20261030_210310" src="https://github.com/user-attachments/assets/52d7d42a-2549-478a-b455-45ad6a254ab5" />
-<img width="160" height="120" alt="Screenshot_20261030_210333" src="https://github.com/user-attachments/assets/03e517fb-d005-4933-a945-0e4a6b1afab1" />
-<img width="160" height="120" alt="Screenshot_20261030_210628" src="https://github.com/user-attachments/assets/6383e7b9-c80e-4e51-a16a-f14065afb2ca" />
-<img width="160" height="120" alt="Screenshot_20261030_210903" src="https://github.com/user-attachments/assets/156453d7-95a4-4afe-8c0a-c515b5aa3b1c" />
-<img width="160" height="120" alt="Screenshot_20261030_214341" src="https://github.com/user-attachments/assets/57dad820-5816-4f0a-a40c-929adba65e93" />
-
-### DELTARUNE Chapter 5 (GLFW) [WAD Version 17]
-<img width="160" height="120" alt="Screenshot_20261030_211725" src="https://github.com/user-attachments/assets/f1e55ec5-64a3-448f-a991-c3b25f377dae" />
-<img width="160" height="120" alt="Screenshot_20261030_211741" src="https://github.com/user-attachments/assets/62a186b6-988c-4ce7-9e33-e7609c94edfe" />
-<img width="160" height="120" alt="Screenshot_20261030_211810" src="https://github.com/user-attachments/assets/1063ecda-d426-459b-9cf0-81835caaf2af" />
-<img width="160" height="120" alt="Screenshot_20261030_211821" src="https://github.com/user-attachments/assets/31a8440b-786b-484b-815b-e84dbc19a3e6" />
-<img width="160" height="120" alt="Screenshot_20261030_211841" src="https://github.com/user-attachments/assets/25455d66-04f7-4a45-809e-b48501605500" />
-<img width="160" height="120" alt="Screenshot_20261030_211932" src="https://github.com/user-attachments/assets/00f694f9-826e-4d97-adf1-3a59ad9adc05" />
-<img width="160" height="120" alt="Screenshot_20261030_212003" src="https://github.com/user-attachments/assets/e48ba892-b4a3-4656-a680-8ab33713fa2e" />
-<img width="160" height="120" alt="Screenshot_20261030_212015" src="https://github.com/user-attachments/assets/152afce6-5ad7-4609-bb55-d8170501f41e" />
-<img width="160" height="120" alt="Screenshot_20261030_212154" src="https://github.com/user-attachments/assets/faa6481c-0446-42cd-b476-7816253e8009" />
-<img width="160" height="120" alt="Screenshot_20261030_212250" src="https://github.com/user-attachments/assets/17c51dcf-e682-4be2-9023-7900c496ddad" />
-<img width="160" height="120" alt="Screenshot_20261030_212316" src="https://github.com/user-attachments/assets/fa272845-64ce-48ff-8e7a-f3a2a0bc695a" />
-
-### DELTARUNE Chapter Selector (GLFW) [WAD Version 17]
-
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/b8a848df-fd1c-49b7-9602-e8020ac86d5d" />
-
-### Undertale Yellow (GLFW) [WAD Version 17]
-<img width="160" height="120" alt="Screenshot_20261030_215006" src="https://github.com/user-attachments/assets/e1bc694e-3eb8-4330-9ef9-6f4592fbe00f" />
-<img width="160" height="120" alt="Screenshot_20261030_215150" src="https://github.com/user-attachments/assets/e2b557bb-20f1-4371-a797-2b31c861ebb8" />
-<img width="160" height="120" alt="Screenshot_20261030_215231" src="https://github.com/user-attachments/assets/0bd92d9a-d362-4c4b-8388-bac204c33a80" />
-<img width="160" height="120" alt="Screenshot_20261030_215250" src="https://github.com/user-attachments/assets/09438124-e240-43ea-90da-174ac29acc0a" />
-<img width="160" height="120" alt="Screenshot_20261030_215334" src="https://github.com/user-attachments/assets/a102d8d1-b04a-4b5b-ae37-b8646186237f" />
-<img width="160" height="120" alt="Screenshot_20261030_215348" src="https://github.com/user-attachments/assets/7705842f-9075-4463-84a7-ab342d64da19" />
-<img width="160" height="120" alt="Screenshot_20261030_215438" src="https://github.com/user-attachments/assets/3533cd30-1a65-4790-b2e2-89361d235911" />
-<img width="160" height="120" alt="Screenshot_20261030_215451" src="https://github.com/user-attachments/assets/57322063-67f1-4523-b71b-431e64a2a9c8" />
-<img width="160" height="120" alt="Screenshot_20261030_215537" src="https://github.com/user-attachments/assets/a0ee2121-b4dc-4dab-9783-79cf11934fa1" />
-
-### Pizza Tower (GLFW) [WAD Version 17]
-<img width="160" alt="Screenshot_20261030_214716" src="https://github.com/user-attachments/assets/7ac08c5c-20c7-41c5-8c6f-8dfd54e56449" />
-<img width="160" alt="Screenshot_20261030_214739" src="https://github.com/user-attachments/assets/a1e0e226-2aa3-406d-a4f4-1fc727ed03bb" />
-<img width="160" alt="Screenshot_20261030_214758" src="https://github.com/user-attachments/assets/71f823fe-2663-48de-a3b4-6d03ececc570" />
-<img width="160" alt="Screenshot_20261030_214809" src="https://github.com/user-attachments/assets/5bb84dc9-39e9-4343-8e2e-28f4f8d248c1" />
-<img width="160" alt="Screenshot_20261030_214819" src="https://github.com/user-attachments/assets/1e0ab08e-fe09-4aa0-b6e3-72b224857406" />
-
-
-
-### Undertale 10th Anniversary (GLFW) [WAD Version 17]
-
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/4ec0c64e-23f1-4bb1-8291-6aaf626a690f" />
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/4ea7d078-784d-4861-aeb1-4ee2d1d70508" />
-<img width="160" height="120" alt="image" src="https://github.com/user-attachments/assets/45eb5be9-5e7b-4930-bb7e-2f2c49c76a49" />
-
-### NXTALE (Undertale for Xbox One) (GLFW) [WAD Version 17]
-
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/7c4e2224-76e4-495e-8382-fad2dbdef207" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/6af34191-66c6-44dd-8712-907641520073" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/150aec4c-8cfb-4cef-9db0-f339158b0d14" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/4e3489e8-11de-4c8c-953c-f7b776bb4eb8" />
-
-### AM2R (GLFW) [WAD Version 14]
-
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/3e46dfed-487c-4d91-9cd5-c71adc7a6cb5" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/4a4b6da1-dae4-4d0f-8611-12e7a1fc8d8c" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/d522be68-1003-4208-bf6b-d59a004606ba" />
-
-### GameMaker: Studio Platformer Demo (GLFW) [WAD Version 10]
-
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/e8cd174c-5113-416b-9e3a-c4029e1e3176" />
-<img width="160" alt="image" src="https://github.com/user-attachments/assets/3702a261-01fe-4b04-9e6c-b69336c2ce46" />
-
-## PS2 Videos
-
-### Undertale (PlayStation 2) [WAD Version 16]
-
-
-https://youtu.be/PuzBxe0VGtY
-
-https://youtu.be/vkQMqXr0MQE
-
-### DELTARUNE (SURVEY_PROGRAM) (PlayStation 2) [WAD Version 16]
-
-
-https://youtu.be/TLJtV2WnrmQ
-
-### DELTARUNE Chapter 2 (PlayStation 2) [WAD Version 17]
-
-
-
-https://youtu.be/uuN72Hv50d4
-
-https://youtu.be/Qxt5oF2_lYY?si=Ix9WZY2sc9v4umR7
-
-
-### DELTARUNE Chapter 3 (PlayStation 2) [WAD Version 17]
-
-https://youtu.be/c9r79sQABYg
-
-
-
-## Similar Projects
-
-* [UndertaleModTool](https://github.com/UnderminersTeam/UndertaleModTool)
-* [OpenGM](https://github.com/misternebula/OpenGM)
-* [Starfait](https://github.com/MrPowerGamerBR/Starfait)
-* [reGML](https://github.com/TimGoTheCreator/reGML)
-* [Luna](https://github.com/nommiin/Luna)
-* [TinyGameMakerVM](https://github.com/MrPowerGamerBR/TinyGameMakerVM)
+- **UNDERTALE (Bytecode 16)**
+<img width="160" height="300" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/d2b7229ec79a30dc5cabaad163a595741d37897a/resources/readme/screenshots/1000057263.jpg" />
+<img width="160" height="300" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/d2b7229ec79a30dc5cabaad163a595741d37897a/resources/readme/screenshots/1000057262.jpg" />
+<img width="160" height="300" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/d2b7229ec79a30dc5cabaad163a595741d37897a/resources/readme/screenshots/1000057257.jpg" />
+<img width="160" height="300" alt="Image" src="https://github.com/Project-Sunshine-Native/cinnamon/blob/d2b7229ec79a30dc5cabaad163a595741d37897a/resources/readme/screenshots/1000049179.jpg" />
 
 ## Disclaimer
 
-Butterscotch has no association, endorsement, or any connection whatsoever with any of the software that it facilitates, and does not provide any of the software it can run by itself. In order to use Butterscotch, you will need to provide your own game files.
+Cinnamon has no association, endorsement, or any connection whatsoever with any of the software that it facilitates, and does not provide any of the software it can run by itself. In order to use Cinnamon, you will need to provide your own game files.

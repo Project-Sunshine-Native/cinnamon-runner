@@ -33,6 +33,66 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "3ds",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/3dsx",
+      "cacheVariables": {
+        "PLATFORM": "3ds",
+        "AUDIO_BACKEND": "3ds",
+        "ENABLE_WAD14": true,
+        "ENABLE_WAD16": true,
+        "ENABLE_WAD17": true,
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "3ds-debug",
+      "inherits": "3ds",
+      "binaryDir": "${sourceDir}/build/3ds-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "wii",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wii",
+      "cacheVariables": {
+        "PLATFORM": "wii",
+        "AUDIO_BACKEND": "wii",
+        "ENABLE_WAD14": true,
+        "ENABLE_WAD16": true,
+        "ENABLE_WAD17": true,
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "wii-debug",
+      "inherits": "wii",
+      "binaryDir": "${sourceDir}/build/wii-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "3ds",
+      "configurePreset": "3ds"
+    },
+    {
+      "name": "3ds-debug",
+      "configurePreset": "3ds-debug"
+    },
+    {
+      "name": "wii",
+      "configurePreset": "wii"
+    },
+    {
+      "name": "wii-debug",
+      "configurePreset": "wii-debug"
     }
   ]
 }

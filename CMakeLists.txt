@@ -1,5 +1,52 @@
 cmake_minimum_required(VERSION 3.21)
 
+function(resolve_devkitpro_root OUT_VAR)
+    set(RESOLVED_DEVKITPRO_ROOT "")
+    if(DEFINED ENV{DEVKITPRO} AND NOT "$ENV{DEVKITPRO}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{DEVKITPRO}" RESOLVED_DEVKITPRO_ROOT)
+    elseif(DEFINED DEVKITPRO_ROOT AND NOT "${DEVKITPRO_ROOT}" STREQUAL "")
+        set(RESOLVED_DEVKITPRO_ROOT "${DEVKITPRO_ROOT}")
+    elseif(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT "${CMAKE_TOOLCHAIN_FILE}" STREQUAL "")
+        get_filename_component(DEVKITPRO_TOOLCHAIN_PATH "${CMAKE_TOOLCHAIN_FILE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+        get_filename_component(DEVKITPRO_TOOLCHAIN_DIR "${DEVKITPRO_TOOLCHAIN_PATH}" DIRECTORY)
+        get_filename_component(DEVKITPRO_TOOLCHAIN_PARENT "${DEVKITPRO_TOOLCHAIN_DIR}" NAME)
+        if(DEVKITPRO_TOOLCHAIN_PARENT STREQUAL "cmake")
+            get_filename_component(RESOLVED_DEVKITPRO_ROOT "${DEVKITPRO_TOOLCHAIN_DIR}" DIRECTORY)
+        endif()
+    endif()
+
+    if(RESOLVED_DEVKITPRO_ROOT STREQUAL "")
+        message(FATAL_ERROR "Please define DEVKITPRO to point to your devkitPro path or set CMAKE_TOOLCHAIN_FILE explicitly.")
+    endif()
+
+    set(DEVKITPRO_ROOT "${RESOLVED_DEVKITPRO_ROOT}" CACHE PATH "devkitPro root directory")
+    set(${OUT_VAR} "${RESOLVED_DEVKITPRO_ROOT}" PARENT_SCOPE)
+endfunction()
+
+function(select_devkitpro_toolchain)
+    if(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT "${CMAKE_TOOLCHAIN_FILE}" STREQUAL "")
+        return()
+    endif()
+
+    resolve_devkitpro_root(RESOLVED_DEVKITPRO_ROOT)
+    foreach(TOOLCHAIN_RELATIVE_PATH IN LISTS ARGN)
+        set(TOOLCHAIN_CANDIDATE "${RESOLVED_DEVKITPRO_ROOT}/${TOOLCHAIN_RELATIVE_PATH}")
+        if(EXISTS "${TOOLCHAIN_CANDIDATE}")
+            set(CMAKE_TOOLCHAIN_FILE "${TOOLCHAIN_CANDIDATE}" CACHE PATH "toolchain file" FORCE)
+            return()
+        endif()
+    endforeach()
+
+    message(FATAL_ERROR "Unable to find a devkitPro CMake toolchain under ${RESOLVED_DEVKITPRO_ROOT}. Set CMAKE_TOOLCHAIN_FILE explicitly.")
+endfunction()
+
+if(PLATFORM STREQUAL "3ds")
+    select_devkitpro_toolchain(cmake/3DS.cmake)
+endif()
+if(PLATFORM STREQUAL "wii")
+    select_devkitpro_toolchain(cmake/Wii.cmake)
+endif()
+
 if(PLATFORM STREQUAL "ps3")
     set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/ppu.cmake)
 endif()
@@ -104,6 +151,8 @@ if(AUDIO_BACKEND STREQUAL "")
         set(AUDIO_BACKEND "openal")
     elseif(PLATFORM STREQUAL "ps2")
         set(AUDIO_BACKEND "ps2")
+    elseif(PLATFORM STREQUAL "3ds" OR PLATFORM STREQUAL "wii")
+        set(AUDIO_BACKEND "${PLATFORM}")
     else()
         set(AUDIO_BACKEND "miniaudio")
     endif()
@@ -120,6 +169,8 @@ elseif(AUDIO_BACKEND STREQUAL "web")
     file(GLOB AUDIO_SOURCES src/audio/web/*.c src/audio/miniaudio/*.c)
 elseif(AUDIO_BACKEND STREQUAL "ps2")
     file(GLOB AUDIO_SOURCES src/audio/ps2/*.c)
+elseif(AUDIO_BACKEND STREQUAL "3ds" OR AUDIO_BACKEND STREQUAL "wii")
+    file(GLOB AUDIO_SOURCES CONFIGURE_DEPENDS src/audio/${AUDIO_BACKEND}/*.c)
 elseif(NOT AUDIO_BACKEND STREQUAL "none")
     message(FATAL_ERROR "Invalid AUDIO_BACKEND!")
 endif()
@@ -192,7 +243,7 @@ list(APPEND SOURCES ${PHYSICS_SOURCES})
 
 # These platforms haven't been converted to the refactored system yet.
 # This list should NEVER grow, all new platforms should use the new system.
-if(PLATFORM STREQUAL "ps2" OR PLATFORM STREQUAL "ps3" OR PLATFORM STREQUAL "android")
+if(PLATFORM STREQUAL "ps2" OR PLATFORM STREQUAL "ps3" OR PLATFORM STREQUAL "android" OR PLATFORM STREQUAL "3ds" OR PLATFORM STREQUAL "wii")
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/loop.c")
 endif()
 
@@ -203,6 +254,19 @@ if(PLATFORM STREQUAL "android")
     add_library(butterscotch SHARED ${SOURCES} ${PLATFORM_SOURCES} ${AUDIO_SOURCES} ${DEFAULT_FONT_SOURCES})
 else()
     add_executable(butterscotch ${SOURCES} ${PLATFORM_SOURCES} ${AUDIO_SOURCES} ${DEFAULT_FONT_SOURCES})
+endif()
+
+# Nintendo backends own their event loop, native textures, and streamed audio.
+if(PLATFORM STREQUAL "3ds" OR PLATFORM STREQUAL "wii")
+    target_sources(butterscotch PRIVATE
+        src/lz11/lz11.c
+        src/audio/common/sound_bank.c
+        src/audio/common/vorbis_probe.c
+        src/audio/common/streamed_audio.c
+    )
+    target_include_directories(butterscotch PRIVATE ${CMAKE_SOURCE_DIR}/src/video)
+    # These SDKs do not provide FFmpeg; avoid finding host libraries when cross compiling.
+    set(VIDEO_BACKEND "none" CACHE STRING "Video playback backend (ffmpeg or none)")
 endif()
 
 # Video playback backend
@@ -325,6 +389,14 @@ elseif(AUDIO_BACKEND STREQUAL "web")
 elseif(AUDIO_BACKEND STREQUAL "ps2")
     target_include_directories(butterscotch PUBLIC src/audio/ps2)
     add_compile_definitions(USE_PS2_AUDIO)
+endif()
+
+if(AUDIO_BACKEND STREQUAL "3ds")
+    target_include_directories(butterscotch PUBLIC src/audio/3ds)
+    add_compile_definitions(USE_3DS_AUDIO)
+elseif(AUDIO_BACKEND STREQUAL "wii")
+    target_include_directories(butterscotch PUBLIC src/audio/wii)
+    add_compile_definitions(USE_WII_AUDIO)
 endif()
 
 # stb_ds
@@ -1004,6 +1076,398 @@ elseif(PLATFORM STREQUAL "ps3")
     # mojoal calls SDL atomics/threads, so SDL2 must link after it (static link order)
     target_link_libraries(mojoal PUBLIC ${SDL2_LIBRARIES})
     target_link_libraries(butterscotch PRIVATE bzip2 sha1 ps3gl mojoal ${SDL2_LIBRARIES} gcm_sys rsx sysutil io audio rt lv2 m stb_ds stb_vorbis)
+elseif(PLATFORM STREQUAL "wii")
+    add_compile_definitions(PLATFORM_WII USE_FLOAT_REALS GEKKO HW_RVL __wii__)
+
+    resolve_devkitpro_root(DEVKITPRO_ROOT)
+
+    target_include_directories(butterscotch PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/wii
+        ${CMAKE_SOURCE_DIR}/vendor
+        ${CMAKE_SOURCE_DIR}/vendor/stb/ds
+        ${DEVKITPRO_ROOT}/libogc/include
+        ${DEVKITPRO_ROOT}/portlibs/wii/include
+        ${DEVKITPRO_ROOT}/portlibs/ppc/include
+    )
+    target_link_directories(butterscotch PRIVATE
+        ${DEVKITPRO_ROOT}/libogc/lib/wii
+        ${DEVKITPRO_ROOT}/portlibs/wii/lib
+        ${DEVKITPRO_ROOT}/portlibs/ppc/lib
+    )
+    target_compile_options(butterscotch PRIVATE
+        -mcpu=750
+        -meabi
+        -mhard-float
+        -ffunction-sections
+        -fdata-sections
+        -fno-common
+        -Wno-format
+    )
+    target_link_options(butterscotch PRIVATE
+        -mcpu=750
+        -meabi
+        -mhard-float
+        -Wl,--gc-sections
+    )
+
+    if(NOT EXISTS "${DEVKITPRO_ROOT}/portlibs/ppc/include/tremor/ivorbisfile.h" OR NOT EXISTS "${DEVKITPRO_ROOT}/portlibs/ppc/lib/libvorbisidec.a")
+        message(FATAL_ERROR "Wii libvorbisidec/Tremor is required for streamed Ogg audio")
+    endif()
+    set(WII_VORBIS_LIBS vorbisidec ogg)
+
+    target_link_libraries(butterscotch PRIVATE
+        fat
+        ${WII_VORBIS_LIBS}
+        wiiuse
+        bte
+        ogc
+        m
+        bzip2
+        sha1
+        stb_ds
+    )
+    set_target_properties(butterscotch PROPERTIES OUTPUT_NAME boot)
+    ogc_create_dol(butterscotch)
+    add_custom_command(TARGET butterscotch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/resources/wii/icon.png
+            ${CMAKE_SOURCE_DIR}/resources/wii/meta.xml
+            $<TARGET_FILE_DIR:butterscotch>
+        COMMENT "Copying Wii Homebrew Channel resources"
+        VERBATIM
+    )
+elseif(PLATFORM STREQUAL "3ds")
+    set_target_properties(butterscotch PROPERTIES OUTPUT_NAME cinnamon)
+    add_compile_definitions(PLATFORM_3DS USE_FLOAT_REALS NO_RVALUE_INT64)
+
+    option(APPSURFACE-HALF "Render the 3DS application surface at half resolution (640x480 to 320x240)" OFF)
+    if(APPSURFACE-HALF)
+        target_compile_definitions(butterscotch PRIVATE APPSURFACE_HALF=1)
+    endif()
+
+    option(useROMFS "Load 3DS game data from the packaged RomFS" OFF)
+    if(useROMFS)
+        add_compile_definitions(N3DS_USE_ROMFS)
+    endif()
+
+    resolve_devkitpro_root(DEVKITPRO_ROOT)
+
+    target_include_directories(butterscotch PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/3ds
+        ${CMAKE_SOURCE_DIR}/vendor
+        ${CMAKE_SOURCE_DIR}/vendor/stb/ds
+        ${CMAKE_SOURCE_DIR}/vendor/stb/image
+        ${DEVKITPRO_ROOT}/libctru/include
+        ${DEVKITPRO_ROOT}/portlibs/3ds/include
+    )
+
+    target_link_directories(butterscotch PRIVATE
+        ${DEVKITPRO_ROOT}/libctru/lib
+        ${DEVKITPRO_ROOT}/portlibs/3ds/lib
+    )
+
+    target_compile_options(butterscotch PRIVATE
+        -march=armv6k
+        -mtune=mpcore
+        -mfloat-abi=hard
+        -mtp=soft
+        -mword-relocations
+        -ffunction-sections
+        -fdata-sections
+        -fomit-frame-pointer
+        -fno-common
+        -fno-unwind-tables
+        -fno-asynchronous-unwind-tables
+        -fsingle-precision-constant
+        -fno-math-errno
+        -Wno-format
+    )
+    target_compile_options(butterscotch PRIVATE "$<$<CONFIG:Release>:-O3;-DNDEBUG;-g0;-flto>")
+    target_link_options(butterscotch PRIVATE
+        -march=armv6k
+        -mtune=mpcore
+        -mfloat-abi=hard
+        -mtp=soft
+        -mword-relocations
+        -Wl,--gc-sections
+        -Wl,--sort-section=name
+    )
+    target_link_options(butterscotch PRIVATE "$<$<CONFIG:Release>:-g0;-flto>")
+
+    set_source_files_properties(
+        src/vm.c
+        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Release>:-O3;-falign-functions=32;-falign-loops=16>"
+    )
+
+    target_compile_options(sha1 PRIVATE -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft)
+    target_compile_options(bzip2 PRIVATE -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft)
+
+    set(N3DS_RESOURCE_ROOT ${CMAKE_SOURCE_DIR}/resources/3ds)
+    set(N3DS_ROMFS_SOURCE_DIR ${N3DS_RESOURCE_ROOT}/romfs CACHE PATH "Files packaged in the 3DS RomFS")
+    set(N3DS_BUILD_RESOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources/3ds)
+    set(N3DS_ROMFS_DIR ${N3DS_BUILD_RESOURCE_DIR}/romfs)
+    set(N3DS_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/3ds)
+    set(N3DS_HOST_TOOLS_DIR ${CMAKE_CURRENT_BINARY_DIR}/host-tools)
+    file(MAKE_DIRECTORY ${N3DS_GENERATED_DIR})
+
+    find_program(CTR_PICASSO picasso HINTS ${DEVKITPRO_ROOT}/tools/bin)
+    find_program(CTR_TEX3DS tex3ds HINTS ${DEVKITPRO_ROOT}/tools/bin)
+    find_program(CTR_3DSXTOOL 3dsxtool HINTS ${DEVKITPRO_ROOT}/tools/bin)
+    find_program(CTR_SMDHTOOL smdhtool HINTS ${DEVKITPRO_ROOT}/tools/bin)
+    find_program(CTR_BANNERTOOL bannertool HINTS ${N3DS_HOST_TOOLS_DIR} ${DEVKITPRO_ROOT}/tools/bin)
+    find_program(CTR_MAKEROM makerom HINTS ${N3DS_HOST_TOOLS_DIR} ${DEVKITPRO_ROOT}/tools/bin)
+
+    option(N3DS_AUTO_FETCH_CIA_TOOLS
+        "Download pinned makerom and bannertool host binaries when they are not installed" ON)
+    set(N3DS_CIA_TOOL_OUTPUTS)
+    if(N3DS_AUTO_FETCH_CIA_TOOLS AND (NOT CTR_BANNERTOOL OR NOT CTR_MAKEROM))
+        string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" N3DS_HOST_PROCESSOR)
+        set(N3DS_MAKEROM_VERSION 0.19.0)
+        set(N3DS_BANNERTOOL_VERSION 1.2.2)
+        set(N3DS_BANNERTOOL_URL
+            "https://github.com/Epicpkmn11/bannertool/releases/download/v${N3DS_BANNERTOOL_VERSION}/bannertool.zip")
+        set(N3DS_BANNERTOOL_SHA256
+            e4259c08fe8944ebadd5f4b96f9a8603e5427338074cfc46323fbbc3410d51ed)
+        set(N3DS_CIA_TOOLS_SUPPORTED TRUE)
+
+        if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+            N3DS_HOST_PROCESSOR MATCHES "^(x86_64|amd64)$")
+            set(N3DS_MAKEROM_PLATFORM ubuntu_x86_64)
+            set(N3DS_MAKEROM_SHA256
+                287b809dec064e0ad597e3d272c49ecb7eed41693d5ee6fef9d8a8aa24c2497e)
+            set(N3DS_BANNERTOOL_MEMBER linux-x86_64/bannertool)
+            set(N3DS_HOST_TOOL_SUFFIX "")
+        elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND
+            N3DS_HOST_PROCESSOR MATCHES "^(x86_64|amd64)$")
+            set(N3DS_MAKEROM_PLATFORM macos_x86_64)
+            set(N3DS_MAKEROM_SHA256
+                a52563e5549cd2dd84e9b8d1cb0d1fdf15ea9bd0f6241e2e178fe4e4bf3a9277)
+            set(N3DS_BANNERTOOL_MEMBER mac-x86_64/bannertool)
+            set(N3DS_HOST_TOOL_SUFFIX "")
+        elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND
+            N3DS_HOST_PROCESSOR MATCHES "^(x86_64|amd64)$")
+            set(N3DS_MAKEROM_PLATFORM win_x86_64)
+            set(N3DS_MAKEROM_SHA256
+                88df4455e60556374e202d507f54ee03fac7493ec9554ab853157524b6d69db0)
+            set(N3DS_BANNERTOOL_MEMBER windows-x86_64/bannertool.exe)
+            set(N3DS_HOST_TOOL_SUFFIX .exe)
+        else()
+            set(N3DS_CIA_TOOLS_SUPPORTED FALSE)
+            message(STATUS
+                "Automatic makerom/bannertool setup is unavailable for "
+                "${CMAKE_HOST_SYSTEM_NAME}/${CMAKE_HOST_SYSTEM_PROCESSOR}")
+        endif()
+
+        if(N3DS_CIA_TOOLS_SUPPORTED)
+            set(N3DS_MAKEROM_URL
+                "https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v${N3DS_MAKEROM_VERSION}/makerom-v${N3DS_MAKEROM_VERSION}-${N3DS_MAKEROM_PLATFORM}.zip")
+            if(NOT CTR_MAKEROM)
+                set(CTR_MAKEROM
+                    ${N3DS_HOST_TOOLS_DIR}/makerom-${N3DS_MAKEROM_VERSION}${N3DS_HOST_TOOL_SUFFIX})
+                add_custom_command(
+                    OUTPUT ${CTR_MAKEROM}
+                    COMMAND ${CMAKE_COMMAND}
+                        -DTOOL_NAME=makerom
+                        -DTOOL_URL=${N3DS_MAKEROM_URL}
+                        -DTOOL_SHA256=${N3DS_MAKEROM_SHA256}
+                        -DTOOL_ARCHIVE_MEMBER=makerom${N3DS_HOST_TOOL_SUFFIX}
+                        -DTOOL_OUTPUT=${CTR_MAKEROM}
+                        -P ${CMAKE_SOURCE_DIR}/cmake/fetch_3ds_tool.cmake
+                    DEPENDS ${CMAKE_SOURCE_DIR}/cmake/fetch_3ds_tool.cmake
+                    COMMENT "Installing makerom ${N3DS_MAKEROM_VERSION}"
+                    VERBATIM
+                )
+                list(APPEND N3DS_CIA_TOOL_OUTPUTS ${CTR_MAKEROM})
+            endif()
+            if(NOT CTR_BANNERTOOL)
+                set(CTR_BANNERTOOL
+                    ${N3DS_HOST_TOOLS_DIR}/bannertool-${N3DS_BANNERTOOL_VERSION}${N3DS_HOST_TOOL_SUFFIX})
+                add_custom_command(
+                    OUTPUT ${CTR_BANNERTOOL}
+                    COMMAND ${CMAKE_COMMAND}
+                        -DTOOL_NAME=bannertool
+                        -DTOOL_URL=${N3DS_BANNERTOOL_URL}
+                        -DTOOL_SHA256=${N3DS_BANNERTOOL_SHA256}
+                        -DTOOL_ARCHIVE_MEMBER=${N3DS_BANNERTOOL_MEMBER}
+                        -DTOOL_OUTPUT=${CTR_BANNERTOOL}
+                        -P ${CMAKE_SOURCE_DIR}/cmake/fetch_3ds_tool.cmake
+                    DEPENDS ${CMAKE_SOURCE_DIR}/cmake/fetch_3ds_tool.cmake
+                    COMMENT "Installing bannertool ${N3DS_BANNERTOOL_VERSION}"
+                    VERBATIM
+                )
+                list(APPEND N3DS_CIA_TOOL_OUTPUTS ${CTR_BANNERTOOL})
+            endif()
+            add_custom_target(n3ds_cia_tools DEPENDS ${N3DS_CIA_TOOL_OUTPUTS})
+        endif()
+    endif()
+
+    foreach(REQUIRED_TOOL CTR_PICASSO CTR_3DSXTOOL)
+        if(NOT ${REQUIRED_TOOL})
+            message(FATAL_ERROR "Required 3DS tool not found: ${REQUIRED_TOOL}")
+        endif()
+    endforeach()
+
+    set(N3DS_SHADER_SHBIN ${N3DS_GENERATED_DIR}/n3ds_2d.shbin)
+    set(N3DS_SHADER_C ${N3DS_GENERATED_DIR}/n3ds_2d_shbin.c)
+    add_custom_command(
+        OUTPUT "${N3DS_SHADER_C}"
+        BYPRODUCTS "${N3DS_SHADER_SHBIN}"
+        COMMAND "${CTR_PICASSO}" -o "${N3DS_SHADER_SHBIN}" "${N3DS_RESOURCE_ROOT}/shaders/3ds_2d.pica"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${N3DS_SHADER_SHBIN}" "-DOUTPUT=${N3DS_SHADER_C}" -DSYMBOL=n3ds_2d_shbin -P "${CMAKE_SOURCE_DIR}/cmake/embed_binary.cmake"
+        DEPENDS "${N3DS_RESOURCE_ROOT}/shaders/3ds_2d.pica" "${CMAKE_SOURCE_DIR}/cmake/embed_binary.cmake"
+        COMMENT "Embedding 3DS shader"
+        VERBATIM
+    )
+    target_sources(butterscotch PRIVATE ${N3DS_SHADER_C})
+
+    set(N3DS_3DSX ${CMAKE_CURRENT_BINARY_DIR}/cinnamon.3dsx)
+    set(N3DS_SMDH ${CMAKE_CURRENT_BINARY_DIR}/cinnamon.smdh)
+    set(N3DS_BANNER ${CMAKE_CURRENT_BINARY_DIR}/cinnamon.bnr)
+    set(N3DS_CIA ${CMAKE_CURRENT_BINARY_DIR}/cinnamon.cia)
+    set(N3DS_APP_TITLE "UNDERTALE")
+    set(N3DS_APP_DESCRIPTION "OG game by Toby Fox.")
+    set(N3DS_APP_AUTHOR "Sunshine Dev Team")
+    set(N3DS_APP_PRODUCT_CODE "000400000B0E2A00")
+    set(N3DS_APP_UNIQUE_ID "0x1929")
+    set(N3DS_APP_ENCRYPTED "false")
+    set(N3DS_APP_SYSTEM_MODE "64MB")
+    set(N3DS_APP_SYSTEM_MODE_EXT "124MB")
+    if(EXISTS ${N3DS_RESOURCE_ROOT}/meta/AppInfo)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${N3DS_RESOURCE_ROOT}/meta/AppInfo")
+        file(STRINGS ${N3DS_RESOURCE_ROOT}/meta/AppInfo N3DS_APPINFO_LINES)
+        foreach(APPINFO_LINE IN LISTS N3DS_APPINFO_LINES)
+            if(APPINFO_LINE MATCHES "^([A-Za-z0-9_]+)[ \t]*=[ \t]*(.*)$")
+                set(N3DS_${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT N3DS_APP_SYSTEM_MODE MATCHES "^(64MB|96MB|80MB|72MB|32MB)$")
+        message(FATAL_ERROR "APP_SYSTEM_MODE must be 64MB, 96MB, 80MB, 72MB, or 32MB")
+    endif()
+    if(NOT N3DS_APP_SYSTEM_MODE_EXT MATCHES "^(Legacy|124MB|178MB)$")
+        message(FATAL_ERROR "APP_SYSTEM_MODE_EXT must be Legacy, 124MB, or 178MB")
+    endif()
+
+    set(N3DS_RESOURCE_OUTPUTS ${N3DS_SHADER_C})
+    set(N3DS_3DSXTOOL_ARGS $<TARGET_FILE:butterscotch> ${N3DS_3DSX})
+    set(N3DS_ROMFS_PREPARED FALSE)
+    set(N3DS_ROMFS_T3X_OUTPUTS)
+
+    if(CTR_TEX3DS AND EXISTS ${N3DS_ROMFS_SOURCE_DIR}/gfx/debugTinyFont.png)
+        foreach(N3DS_ROMFS_T3X_ASSET debugTinyFont)
+            set(N3DS_ROMFS_T3X_SOURCE ${N3DS_ROMFS_SOURCE_DIR}/gfx/${N3DS_ROMFS_T3X_ASSET}.png)
+            set(N3DS_ROMFS_T3X_GENERATED ${N3DS_GENERATED_DIR}/romfs/gfx/${N3DS_ROMFS_T3X_ASSET}.t3x)
+            add_custom_command(
+                OUTPUT ${N3DS_ROMFS_T3X_GENERATED}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${N3DS_GENERATED_DIR}/romfs/gfx
+                COMMAND ${CTR_TEX3DS} -f rgba8 -o ${N3DS_ROMFS_T3X_GENERATED} ${N3DS_ROMFS_T3X_SOURCE}
+                DEPENDS ${N3DS_ROMFS_T3X_SOURCE}
+                COMMENT "Converting 3DS ROMFS texture ${N3DS_ROMFS_T3X_ASSET}"
+            )
+            list(APPEND N3DS_ROMFS_T3X_OUTPUTS ${N3DS_ROMFS_T3X_GENERATED})
+        endforeach()
+    elseif(EXISTS ${N3DS_ROMFS_SOURCE_DIR}/gfx/debugTinyFont.png)
+        message(STATUS "tex3ds not found; built-in 3DS ROMFS textures will not be converted.")
+    endif()
+
+    if(useROMFS AND NOT EXISTS ${N3DS_ROMFS_SOURCE_DIR}/data.win)
+        message(FATAL_ERROR "useROMFS requires ${N3DS_ROMFS_SOURCE_DIR}/data.win")
+    endif()
+
+    file(GLOB_RECURSE N3DS_BUNDLED_ROMFS_FILES CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE ${N3DS_ROMFS_SOURCE_DIR}/*)
+    if(N3DS_BUNDLED_ROMFS_FILES OR N3DS_ROMFS_T3X_OUTPUTS)
+        set(N3DS_ROMFS_STAMP ${N3DS_BUILD_RESOURCE_DIR}/romfs-copy.stamp)
+        add_custom_command(
+            OUTPUT ${N3DS_ROMFS_STAMP}
+            COMMAND ${CMAKE_COMMAND} -E rm -rf ${N3DS_ROMFS_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${N3DS_ROMFS_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${N3DS_ROMFS_SOURCE_DIR} ${N3DS_ROMFS_DIR}
+            DEPENDS ${N3DS_BUNDLED_ROMFS_FILES} ${N3DS_ROMFS_T3X_OUTPUTS}
+            COMMENT "Staging 3DS RomFS resources"
+        )
+        if(N3DS_ROMFS_T3X_OUTPUTS)
+            add_custom_command(
+                OUTPUT ${N3DS_ROMFS_STAMP} APPEND
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${N3DS_GENERATED_DIR}/romfs/gfx/debugTinyFont.t3x ${N3DS_ROMFS_DIR}/gfx/debugTinyFont.t3x
+            )
+        endif()
+        add_custom_command(
+            OUTPUT ${N3DS_ROMFS_STAMP} APPEND
+            COMMAND ${CMAKE_COMMAND} -E touch ${N3DS_ROMFS_STAMP}
+        )
+        list(APPEND N3DS_RESOURCE_OUTPUTS ${N3DS_ROMFS_STAMP} ${N3DS_ROMFS_T3X_OUTPUTS})
+        list(APPEND N3DS_3DSXTOOL_ARGS --romfs=${N3DS_ROMFS_DIR})
+        set(N3DS_ROMFS_PREPARED TRUE)
+    else()
+        message(STATUS "3DS ROMFS resources not found; building without embedded RomFS.")
+    endif()
+
+    set(N3DS_CIA_ROMFS_READY ${N3DS_ROMFS_PREPARED})
+    set(N3DS_CIA_ROMFS_ARGS -DAPP_ROMFS=${N3DS_ROMFS_DIR})
+
+    set(N3DS_HAVE_SMDH FALSE)
+    if(CTR_SMDHTOOL AND EXISTS ${N3DS_RESOURCE_ROOT}/meta/icon.png)
+        set(N3DS_SMDH_DEPENDS ${N3DS_RESOURCE_ROOT}/meta/icon.png)
+        if(EXISTS ${N3DS_RESOURCE_ROOT}/meta/AppInfo)
+            list(APPEND N3DS_SMDH_DEPENDS ${N3DS_RESOURCE_ROOT}/meta/AppInfo)
+        endif()
+        add_custom_command(
+            OUTPUT ${N3DS_SMDH}
+            COMMAND ${CTR_SMDHTOOL} --create "${N3DS_APP_TITLE}" "${N3DS_APP_DESCRIPTION}" "${N3DS_APP_AUTHOR}" ${N3DS_RESOURCE_ROOT}/meta/icon.png ${N3DS_SMDH}
+            DEPENDS ${N3DS_SMDH_DEPENDS}
+            COMMENT "Generating 3DS SMDH"
+        )
+        list(APPEND N3DS_RESOURCE_OUTPUTS ${N3DS_SMDH})
+        list(APPEND N3DS_3DSXTOOL_ARGS --smdh=${N3DS_SMDH})
+        set(N3DS_HAVE_SMDH TRUE)
+    elseif(CTR_SMDHTOOL)
+        message(STATUS "3DS icon.png not found; SMDH output will be skipped.")
+    endif()
+
+    set(N3DS_HAVE_BANNER FALSE)
+    if(CTR_BANNERTOOL AND EXISTS ${N3DS_RESOURCE_ROOT}/meta/banner.png AND EXISTS ${N3DS_RESOURCE_ROOT}/meta/audio.wav)
+        set(N3DS_BANNER_CWAV ${N3DS_GENERATED_DIR}/banner.cwav)
+        add_custom_command(
+            OUTPUT ${N3DS_BANNER}
+            BYPRODUCTS ${N3DS_BANNER_CWAV}
+            COMMAND "${CTR_BANNERTOOL}" makecwav -i "${N3DS_RESOURCE_ROOT}/meta/audio.wav" -o "${N3DS_BANNER_CWAV}" -l false
+            COMMAND "${CTR_BANNERTOOL}" makebanner -i "${N3DS_RESOURCE_ROOT}/meta/banner.png" -ca "${N3DS_BANNER_CWAV}" -o "${N3DS_BANNER}"
+            DEPENDS ${N3DS_RESOURCE_ROOT}/meta/banner.png ${N3DS_RESOURCE_ROOT}/meta/audio.wav ${CTR_BANNERTOOL}
+            COMMENT "Generating 3DS banner"
+            VERBATIM
+        )
+        list(APPEND N3DS_RESOURCE_OUTPUTS ${N3DS_BANNER})
+        set(N3DS_HAVE_BANNER TRUE)
+    else()
+        message(STATUS "bannertool or 3DS banner resources not found; 3DS banner output will be skipped.")
+    endif()
+
+    add_custom_target(n3ds_resources ALL DEPENDS ${N3DS_RESOURCE_OUTPUTS})
+    add_dependencies(butterscotch n3ds_resources)
+    if(TARGET n3ds_cia_tools)
+        add_dependencies(n3ds_resources n3ds_cia_tools)
+        add_dependencies(butterscotch n3ds_cia_tools)
+    endif()
+
+    target_link_libraries(butterscotch PRIVATE citro2d citro3d ctru vorbisidec ogg m bzip2 sha1 stb_vorbis)
+
+    add_custom_command(TARGET butterscotch POST_BUILD
+        COMMAND ${CTR_3DSXTOOL} ${N3DS_3DSXTOOL_ARGS}
+        COMMENT "Generating 3DSX package"
+    )
+
+    if(CTR_BANNERTOOL AND CTR_MAKEROM AND N3DS_HAVE_SMDH AND N3DS_HAVE_BANNER AND N3DS_CIA_ROMFS_READY AND EXISTS ${N3DS_RESOURCE_ROOT}/meta/template.rsf)
+        set_property(TARGET butterscotch APPEND PROPERTY LINK_DEPENDS
+            "${N3DS_SMDH}" "${N3DS_BANNER}" "${N3DS_RESOURCE_ROOT}/meta/template.rsf")
+        add_custom_command(TARGET butterscotch POST_BUILD
+            COMMAND ${CTR_MAKEROM} -f cia -o ${N3DS_CIA} -elf $<TARGET_FILE:butterscotch> -rsf ${N3DS_RESOURCE_ROOT}/meta/template.rsf -icon ${N3DS_SMDH} -banner ${N3DS_BANNER} ${N3DS_CIA_ROMFS_ARGS} -DAPP_TITLE=${N3DS_APP_TITLE} -DAPP_PRODUCT_CODE=${N3DS_APP_PRODUCT_CODE} -DAPP_UNIQUE_ID=${N3DS_APP_UNIQUE_ID} -DAPP_ENCRYPTED=${N3DS_APP_ENCRYPTED} -DAPP_SYSTEM_MODE=${N3DS_APP_SYSTEM_MODE} -DAPP_SYSTEM_MODE_EXT=${N3DS_APP_SYSTEM_MODE_EXT}
+            COMMENT "Generating CIA package"
+        )
+    else()
+        message(STATUS "makerom, bannertool, or 3DS CIA resources not found; CIA output will be skipped.")
+    endif()
 elseif(PLATFORM STREQUAL "vita")
 else()
     message(FATAL_ERROR "Unknown platform! ${PLATFORM}")

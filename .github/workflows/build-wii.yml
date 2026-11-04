@@ -1,0 +1,37 @@
+name: Wii build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-wii:
+    name: Build (Nintendo Wii)
+    runs-on: ubuntu-24.04
+    container:
+      image: devkitpro/devkitppc:latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain and portlibs
+        run: dkp-pacman -Syu --needed --noconfirm wii-dev ppc-libvorbisidec ppc-libogg
+
+      - name: Configure
+        run: cmake --preset wii
+
+      - name: Build
+        run: cmake --build --preset wii
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinnamon-wii
+          path: |
+            build/wii/boot.elf
+            build/wii/boot.dol
+            build/wii/icon.png
+            build/wii/meta.xml
+          if-no-files-found: error
