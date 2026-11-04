@@ -2,7 +2,7 @@ name: 3DS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, old_3ds_runner_optimizations]
   pull_request:
     branches: [main]
   workflow_dispatch:
