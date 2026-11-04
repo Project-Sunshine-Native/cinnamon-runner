@@ -10,6 +10,7 @@
 #include "opword.h"
 #include "op.h"
 #include "cmpop.h"
+#include "nativeScripts/native_scripts.h"
 
 #include "stdio_compat.h"
 #include <stdlib.h>
@@ -270,6 +271,12 @@ static GMLArray* VM_arraySetWithCoW(VMContext* ctx, RValue* slot, int32_t index,
     GMLArray_growTo(arr, index + 1);
     RValue_writeIntoSlotStealingOwnershipOrCopying(GMLArray_slot(arr, index), writeVal);
     return arr;
+}
+
+void VM_setArrayElement(VMContext* ctx, RValue* arraySlot, int32_t index, RValue value) {
+    requireNotNull(ctx);
+    requireNotNull(arraySlot);
+    VM_arraySetWithCoW(ctx, arraySlot, index, value);
 }
 
 // Creates a copy of "name"
@@ -3610,6 +3617,12 @@ VMContext* VM_create(DataWin* dataWin) {
     // Register built-in functions
     VMBuiltins_registerAll(ctx);
 
+    // Dense native-script dispatch table. Game-specific modules register by CODE name, so games
+    // which do not contain those entries retain their original VM behavior without special cases.
+    ctx->nativeScriptsByCodeIndex = (NativeScriptFunc *)safeCalloc(
+        dataWin->code.count, sizeof(NativeScriptFunc));
+    NativeScripts_registerAll(ctx);
+
     // Pre-resolve all FUNC entries to cached builtin pointers or script code indices.
     // This eliminates per-call string hash lookups in handleCall.
     ctx->funcCallCacheCount = dataWin->func.functionCount;
@@ -3675,6 +3688,7 @@ static CodeLocals* resolveCodeLocals(VMContext* ctx, const char* codeName) {
 RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance, Instance* otherInstance, int32_t eventObjectIndex, int32_t eventType, int32_t eventSubtype, RValue* args, int32_t argCount) {
     require(codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex);
     CodeEntry* code = &ctx->dataWin->code.entries[codeIndex];
+    NativeScriptFunc nativeScript = ctx->nativeScriptsByCodeIndex[codeIndex];
 
     // Create a CallFrame for this script
     CallFrame callFrame = {0};
@@ -3695,9 +3709,12 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
         localsCount = IntIntHashMap_count(callFrame.currentCodeLocalsSlotMap);
     }
 
-    RValue* localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
-    callFrame.localVars = localVars;
-    callFrame.localVarsCount = localsCount;
+    // Native handlers do not execute bytecode locals. Avoid a heap allocation on their hot path;
+    // if a handler declines the call, the original local array is materialized before fallback.
+    if (nativeScript == nullptr && localsCount > 0) {
+        callFrame.localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+        callFrame.localVarsCount = localsCount;
+    }
 
     // Store arguments in scriptArgs (mirrors GMS 1.4's global argument stack).
     // Callee takes an INDEPENDENT reference for strings (strdup) and arrays (incRef) so
@@ -3727,7 +3744,15 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
 #ifdef ENABLE_VM_GML_PROFILER
     Profiler_enter(ctx->profiler, code->name);
 #endif
-    RValue result = executeBytecodeInstructions(ctx, code);
+    RValue result;
+    bool handledNatively = nativeScript != nullptr && nativeScript(ctx, &result);
+    if (!handledNatively) {
+        if (callFrame.localVars == nullptr && localsCount > 0) {
+            callFrame.localVars = (RValue *)safeCalloc(localsCount, sizeof(RValue));
+            callFrame.localVarsCount = localsCount;
+        }
+        result = executeBytecodeInstructions(ctx, code);
+    }
 #ifdef ENABLE_VM_GML_PROFILER
     Profiler_exit(ctx->profiler);
 #endif
@@ -4335,6 +4360,34 @@ BuiltinFunc VM_findBuiltin(VMContext* ctx, const char* name) {
     return ctx->builtinMap[idx].value;
 }
 
+bool VM_registerNativeScript(VMContext* ctx, const char* codeName, NativeScriptFunc func) {
+    requireNotNull(ctx);
+    requireNotNull(codeName);
+    requireNotNull(func);
+    if (ctx->nativeScriptsByCodeIndex == nullptr) return false;
+
+    ptrdiff_t mapIndex = shgeti(ctx->codeIndexByName, (char*)codeName);
+    if (0 > mapIndex) return false;
+
+    int32_t codeIndex = ctx->codeIndexByName[mapIndex].value;
+    if (0 > codeIndex || ctx->dataWin->code.count <= (uint32_t)codeIndex ||
+        ctx->nativeScriptsByCodeIndex[codeIndex] != nullptr) {
+        return false;
+    }
+
+    ctx->nativeScriptsByCodeIndex[codeIndex] = func;
+    logInfo("VM: Registered native script %s (codeIndex=%d)\n", codeName, codeIndex);
+    return true;
+}
+
+NativeScriptFunc VM_findNativeScript(const VMContext* ctx, int32_t codeIndex) {
+    if (ctx == nullptr || ctx->nativeScriptsByCodeIndex == nullptr || 0 > codeIndex ||
+        ctx->dataWin->code.count <= (uint32_t)codeIndex) {
+        return nullptr;
+    }
+    return ctx->nativeScriptsByCodeIndex[codeIndex];
+}
+
 void VM_free(VMContext* ctx) {
     if (ctx == nullptr) return;
 
@@ -4392,6 +4445,9 @@ void VM_free(VMContext* ctx) {
 
     // Free function call cache
     free(ctx->funcCallCache);
+
+    free(ctx->nativeScriptsByCodeIndex);
+    ctx->nativeScriptsByCodeIndex = nullptr;
 
     // Free cross-reference map
     if (ctx->crossRefMap != nullptr) {

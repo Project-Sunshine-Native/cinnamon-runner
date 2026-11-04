@@ -122,6 +122,8 @@ typedef struct VMContext VMContext;
 typedef RValue (*BuiltinFunc)(VMContext* ctx, RValue* args, int32_t argCount);
 #endif
 
+typedef bool (*NativeScriptFunc)(VMContext* ctx, RValue* outResult);
+
 typedef struct {
     char* key;
     BuiltinFunc value;
@@ -147,6 +149,10 @@ struct VMContext {
     DataWin* dataWin;
     struct Runner* runner;
     FuncCallCache* funcCallCache;
+
+    // codeIndex -> optional native replacement. This is a dense array so the hot dispatch path is
+    // one bounds check and one pointer load; nullptr entries continue through the VM interpreter.
+    NativeScriptFunc* nativeScriptsByCodeIndex;
 
     // Warm: touched on calls, variable resolution, event dispatch
     CallFrame* currentCallFrame;
@@ -291,6 +297,12 @@ void VM_registerBuiltin(VMContext* ctx, const char* name, BuiltinFunc func);
 #endif
 BuiltinFunc VM_findBuiltin(VMContext* ctx, const char* name);
 
+// Registers a native replacement for a CODE entry. Returns false when the name is not present in
+// the loaded game or already has a replacement. Native handlers may still decline individual calls
+// by returning false, in which case VM_executeCode executes the original bytecode.
+bool VM_registerNativeScript(VMContext* ctx, const char* codeName, NativeScriptFunc func);
+NativeScriptFunc VM_findNativeScript(const VMContext* ctx, int32_t codeIndex);
+
 char* VM_getVariableNameByVarId(VMContext* ctx, int32_t varId);
 RValue VM_structGetVariableByVarId(Instance* structInst, int32_t varId, int32_t arrayIndex);
 RValue VM_structGetVariableByVarName(VMContext* ctx, Instance* structInst, const char* name, int32_t arrayIndex);
@@ -306,6 +318,9 @@ void VM_copyStatic(VMContext* ctx, RValue* parentRef);
 
 // Look up the varID for a self-scoped variable name, allocating a fresh synthetic ID if absent.
 int32_t VM_getOrAllocateVarID(VMContext* ctx, const char* name);
+
+// Native-script helper: applies the same WAD16/WAD17 copy-on-write rules as bytecode array writes.
+void VM_setArrayElement(VMContext* ctx, RValue* arraySlot, int32_t index, RValue value);
 
 // Writes to the VMContext's scriptArgs, resizing the underlying array if needed
 // The "val" will be RValue_makeIndependent(val), it won't be freed

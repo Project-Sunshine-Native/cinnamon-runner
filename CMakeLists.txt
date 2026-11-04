@@ -229,6 +229,8 @@ if(ENABLE_FMOD)
 endif()
 
 file(GLOB SOURCES src/*.c)
+file(GLOB_RECURSE NATIVE_SCRIPT_SOURCES CONFIGURE_DEPENDS src/nativeScripts/*.c)
+list(APPEND SOURCES ${NATIVE_SCRIPT_SOURCES})
 file(GLOB DEFAULT_FONT_SOURCES src/default_font/*.c)
 if(ENABLE_FMOD)
     list(APPEND SOURCES src/fmod/fmod.c src/fmod/fmod_bank.c src/fmod/fsb.c src/fmod/fmod_dsp.c)
