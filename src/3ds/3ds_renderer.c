@@ -3275,7 +3275,7 @@ static void C3D_drawSpritePos(Renderer* base, int32_t tpagIndex, float x1, float
     if (!C3D_quadVisible(renderer, x1, y1, x2, y2, x3, y3, x4, y4)) return;
     N3DSDrawMapper mapper;
     C3D_mapInitBilerp(&mapper, 0.0f, 0.0f, (float)tpag->sourceWidth, (float)tpag->sourceHeight,
-        x1, y1, x2, y2, x3, y3, x4, y4);
+        x1, y1, x2, y2, x4, y4, x3, y3);
     uint32_t rgba = C3D_makeColor(0xFFFFFFu, alpha);
     if ((uint32_t)tpagIndex < renderer->tpagBindingCount &&
         renderer->tpagBindings[tpagIndex].source == N3DS_TPAG_SOURCE_ATLAS) {
