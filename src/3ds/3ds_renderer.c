@@ -5103,9 +5103,12 @@ static void C3D_gpuSetBlendMode(Renderer* base, int32_t mode) {
     if (mode == bm_add) {
         state->blendDst = bm_one;
         state->blendDstAlpha = bm_one;
-    } else if (mode == bm_subtract)
-        state->blendEq = GPU_BLEND_SUBTRACT;
-    else if (mode == bm_reverse_subtract)
+    } else if (mode == bm_subtract) {
+        state->blendSrc = bm_zero;
+        state->blendDst = bm_inv_src_color;
+        state->blendSrcAlpha = bm_zero;
+        state->blendDstAlpha = bm_inv_src_alpha;
+    } else if (mode == bm_reverse_subtract)
         state->blendEq = GPU_BLEND_REVERSE_SUBTRACT;
     else if (mode == bm_min)
         state->blendEq = GPU_BLEND_MIN;
@@ -5168,7 +5171,10 @@ static int32_t C3D_gpuGetBlendMode(Renderer* base) {
     if (state->blendEq == GPU_BLEND_ADD && state->blendSrc == bm_src_alpha &&
         state->blendDst == bm_one)
         return bm_add;
-    if (state->blendEq == GPU_BLEND_SUBTRACT) return bm_subtract;
+    if (state->blendEq == GPU_BLEND_ADD && state->blendSrc == bm_zero &&
+        state->blendDst == bm_inv_src_color && state->blendSrcAlpha == bm_zero &&
+        state->blendDstAlpha == bm_inv_src_alpha)
+        return bm_subtract;
     if (state->blendEq == GPU_BLEND_REVERSE_SUBTRACT) return bm_reverse_subtract;
     if (state->blendEq == GPU_BLEND_MIN) return bm_min;
     if (state->blendEq == GPU_BLEND_MAX) return bm_max;
