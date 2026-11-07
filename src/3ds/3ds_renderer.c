@@ -1475,6 +1475,10 @@ static void C3D_finishAtlasDraws(N3DSRenderer* renderer) {
     }
 }
 
+static void C3D_finishVertexStream(void* user) {
+    C3D_finishAtlasDraws((N3DSRenderer*)user);
+}
+
 static bool C3D_evictOldestAtlasPage(N3DSRenderer* renderer, uint32_t protectedPage) {
     uint32_t candidate = C3D_pickEvictableAtlasPage(renderer, protectedPage, false);
     if (candidate == UINT32_MAX) {
@@ -5335,6 +5339,8 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
         return;
     }
     renderer->drawContextReady = true;
+    renderer->drawContext.finishDraws = C3D_finishVertexStream;
+    renderer->drawContext.finishDrawsUser = renderer;
     n3ds_c3dSetTexFilter(&renderer->drawContext, base->texFilter);
     renderer->topTarget = C3D_RenderTargetCreate(
         N3DS_TOP_HEIGHT, N3DS_TOP_WIDTH, GPU_RB_RGBA8, -1);

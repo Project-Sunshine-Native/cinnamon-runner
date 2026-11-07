@@ -8,7 +8,6 @@ extern const size_t n3ds_2d_shbin_size;
 
 static void n3ds_c3dUpdateWritePtr(N3DSC3DDrawContext* ctx) {
     if (ctx->vertexBuffer == NULL) return;
-    if (ctx->streamVertexOffset >= ctx->streamVertexCapacity) ctx->streamVertexOffset = 0;
     ctx->vertices = ctx->vertexBuffer + ctx->streamVertexOffset;
 }
 
@@ -56,11 +55,13 @@ static void n3ds_c3dBindState(N3DSC3DDrawContext* ctx) {
     ctx->stateDirty = false;
 }
 
-static void n3ds_c3dWrapStream(N3DSC3DDrawContext* ctx) {
-    n3ds_c3dFrameSplit(ctx);
+static bool n3ds_c3dWrapStream(N3DSC3DDrawContext* ctx) {
+    if (ctx->finishDraws == NULL) return false;
+    ctx->finishDraws(ctx->finishDrawsUser);
     ctx->streamVertexOffset = 0;
     ctx->submitVertexOffset = 0;
     n3ds_c3dUpdateWritePtr(ctx);
+    return true;
 }
 
 static bool n3ds_c3dReserve(
@@ -78,9 +79,9 @@ static bool n3ds_c3dReserve(
         n3ds_c3dFlush(ctx);
     if (indexedQuads && ctx->vertexCount == 0u && (ctx->streamVertexOffset & 3u) != 0u) {
         uint32_t alignedOffset = (ctx->streamVertexOffset + 3u) & ~3u;
-        if (alignedOffset >= ctx->streamVertexCapacity)
-            n3ds_c3dWrapStream(ctx);
-        else {
+        if (alignedOffset >= ctx->streamVertexCapacity) {
+            if (!n3ds_c3dWrapStream(ctx)) return false;
+        } else {
             ctx->streamVertexOffset = alignedOffset;
             n3ds_c3dUpdateWritePtr(ctx);
         }
@@ -88,7 +89,7 @@ static bool n3ds_c3dReserve(
     if (ctx->streamVertexOffset + ctx->vertexCount + vertexCount > ctx->streamVertexCapacity) {
         n3ds_c3dFlush(ctx);
         if (ctx->streamVertexOffset + vertexCount > ctx->streamVertexCapacity) {
-            n3ds_c3dWrapStream(ctx);
+            if (!n3ds_c3dWrapStream(ctx)) return false;
         }
     }
     if (ctx->vertexCount + vertexCount > batchVertexCapacity) {
@@ -170,7 +171,8 @@ bool n3ds_c3dInit(N3DSC3DDrawContext* ctx, uint32_t maxQuads) {
     BufInfo_Add(&ctx->bufInfo, ctx->vertexBuffer, sizeof(N3DSC3DVertex), 3, 0x210);
     uint32_t streamQuadCapacity = ctx->streamVertexCapacity / 4u;
     uint32_t quadIndexCount = streamQuadCapacity * 6u;
-    ctx->quadIndexBuffer = linearAlloc(sizeof(uint16_t) * quadIndexCount);
+    uint32_t totalIndexCount = quadIndexCount + ctx->streamVertexCapacity;
+    ctx->quadIndexBuffer = linearAlloc(sizeof(uint16_t) * totalIndexCount);
     if (ctx->quadIndexBuffer == NULL) {
         linearFree(ctx->vertexBuffer);
         shaderProgramFree(&ctx->shaderProg);
@@ -188,7 +190,10 @@ bool n3ds_c3dInit(N3DSC3DDrawContext* ctx, uint32_t maxQuads) {
         indices[4] = base + 3u;
         indices[5] = base + 2u;
     }
-    GSPGPU_FlushDataCache(ctx->quadIndexBuffer, (u32)(sizeof(uint16_t) * quadIndexCount));
+    ctx->triangleIndexBuffer = ctx->quadIndexBuffer + quadIndexCount;
+    for (uint32_t i = 0; i < ctx->streamVertexCapacity; ++i)
+        ctx->triangleIndexBuffer[i] = (uint16_t)i;
+    GSPGPU_FlushDataCache(ctx->quadIndexBuffer, (u32)(sizeof(uint16_t) * totalIndexCount));
 
     if (!C3D_TexInit(&ctx->whiteTex, 8, 8, GPU_RGBA8)) {
         linearFree(ctx->quadIndexBuffer);
@@ -388,12 +393,10 @@ void n3ds_c3dFlush(N3DSC3DDrawContext* ctx) {
         C3D_DrawElements(GPU_TRIANGLES, (int)indexCount, C3D_UNSIGNED_SHORT,
             ctx->quadIndexBuffer + firstIndex);
     } else {
-        C3D_DrawArrays(GPU_TRIANGLES, (int)firstVertex, (int)drawVertexCount);
+        C3D_DrawElements(GPU_TRIANGLES, (int)drawVertexCount, C3D_UNSIGNED_SHORT,
+            ctx->triangleIndexBuffer + firstVertex);
     }
     ctx->streamVertexOffset += drawVertexCount;
-    if (ctx->streamVertexOffset >= ctx->streamVertexCapacity) {
-        n3ds_c3dWrapStream(ctx);
-    }
     n3ds_c3dResetBatch(ctx);
 }
 
