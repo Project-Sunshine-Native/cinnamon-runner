@@ -7,7 +7,9 @@
 </p>
 
 ---
-Cinnamon is a fork of the Butterscotch GameMaker runner specifically targeting the Nintendo 3DS, Wii, and Wii U
+Cinnamon is a **fully human made** fork of the Butterscotch GameMaker runner specifically targeting the Nintendo 3DS, Wii, and Wii U
+
+The 3DS, Wii, and Wii U backends were built by humans and humans only. No AI tools were used for development!
 
 ## Game Compatibility
 
