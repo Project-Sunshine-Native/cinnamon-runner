@@ -19,8 +19,17 @@ Of course, there are hardware limitations. These are consoles that are more than
 
 Here are the Bytecode Versions that Cinnamon currently supports
 
-* Bytecode Version 16
-* Bytecode Version 17
+- WAD Version 8 (GameMaker: Studio 1.0.198+)
+- WAD Version 9 (GameMaker: Studio 1.0.527+)
+- WAD Version 10 (GameMaker: Studio 1.1.609+)
+- WAD Version 11 (GameMaker: Studio 1.1.754+)
+- WAD Version 12 (GameMaker: Studio 1.1.867+)
+- WAD Version 13 (GameMaker: Studio 1.1.917+)
+- WAD Version 14 (GameMaker: Studio 1.4.1464+)
+- WAD Version 15 (GameMaker: Studio 1.4.1675+)
+- WAD Version 16 (GameMaker: Studio 1.4.1767+)
+- WAD Version 17 (GameMaker: Studio 2.2+)
+
 
 Of course, there are exceptions that break game compatibility altogether:
 
