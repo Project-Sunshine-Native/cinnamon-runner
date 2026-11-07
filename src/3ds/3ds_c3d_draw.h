@@ -45,6 +45,7 @@ typedef struct {
     N3DSC3DVertex* vertexBuffer;
     N3DSC3DVertex* vertices;
     uint16_t* quadIndexBuffer;
+    uint16_t* triangleIndexBuffer;
     uint32_t vertexCapacity;
     uint32_t quadCapacity;
     uint32_t streamVertexCapacity;
@@ -72,6 +73,8 @@ typedef struct {
     bool stateDirty;
     bool projectionDirty;
     bool frameActive;
+    void (*finishDraws)(void* user);
+    void* finishDrawsUser;
 } N3DSC3DDrawContext;
 
 bool n3ds_c3dInit(N3DSC3DDrawContext* ctx, uint32_t maxQuads);

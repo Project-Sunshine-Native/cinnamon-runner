@@ -27,7 +27,8 @@ static void n3ds_logOpenIfNeeded(bool truncate) {
     mkdir("sdmc:/3ds/cinnamon", 0777);
     gLogFile = fopen(N3DS_LOG_PATH, truncate ? "w" : "a");
     if (gLogFile != NULL) {
-        setvbuf(gLogFile, gLogBuffer, _IOFBF, sizeof(gLogBuffer));
+        // keep the last complete event on the sd card after a hard freeze.
+        setvbuf(gLogFile, gLogBuffer, _IOLBF, sizeof(gLogBuffer));
     }
 }
 
@@ -78,4 +79,5 @@ void platformLog(const logType type, const char* format, va_list va) {
                 ? "warning"
                 : "runtime",
         "%s", message);
+    if (type == LOG_TYPE_ERROR && gLogFile != NULL) fflush(gLogFile);
 }
