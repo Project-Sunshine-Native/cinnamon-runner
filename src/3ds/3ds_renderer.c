@@ -492,14 +492,6 @@ static void C3D_markSurfaceReady(N3DSRenderer* renderer, int32_t surfaceID) {
     renderer->surfaces[surfaceID].samplingReady = true;
 }
 
-static void C3D_syncGpuIfDrawing(N3DSRenderer* renderer) {
-    if (renderer->currentTargetSurfaceId == INT32_MIN) return;
-    n3ds_c3dFlush(&renderer->drawContext);
-    n3ds_c3dFrameSplit(&renderer->drawContext);
-    gspWaitForP3D();
-    C3D_applyBlendState(renderer);
-}
-
 static void C3D_invalidateViewportCache(N3DSRenderer* renderer) {
     renderer->viewportCache.valid = false;
 }
@@ -1451,26 +1443,34 @@ static uint32_t C3D_pickEvictableAtlasPage(
     return candidate;
 }
 
-static void C3D_finishAtlasDraws(N3DSRenderer* renderer) {
-    bool resumeFrame = renderer->drawContext.frameActive;
+static bool C3D_suspendDrawFrame(N3DSRenderer* renderer) {
+    if (!renderer->drawContext.frameActive) return false;
     bool topUsed = renderer->topTarget != NULL && renderer->topTarget->used;
     bool bottomUsed = renderer->bottomTarget != NULL && renderer->bottomTarget->used;
-    if (resumeFrame) {
-        n3ds_c3dFlush(&renderer->drawContext);
-        if (renderer->topTarget != NULL) renderer->topTarget->used = false;
-        if (renderer->bottomTarget != NULL) renderer->bottomTarget->used = false;
-        n3ds_c3dEndFrame(&renderer->drawContext);
-    }
+    n3ds_c3dFlush(&renderer->drawContext);
+    if (renderer->topTarget != NULL) renderer->topTarget->used = false;
+    if (renderer->bottomTarget != NULL) renderer->bottomTarget->used = false;
+    n3ds_c3dEndFrame(&renderer->drawContext);
+    if (renderer->topTarget != NULL) renderer->topTarget->used = topUsed;
+    if (renderer->bottomTarget != NULL) renderer->bottomTarget->used = bottomUsed;
+    return true;
+}
+
+static void C3D_resumeDrawFrame(N3DSRenderer* renderer) {
     C3D_FrameBegin(0);
+    renderer->drawContext.frameActive = true;
+    renderer->drawContext.bufferDirty = true;
+    renderer->drawContext.stateDirty = true;
+    renderer->drawContext.projectionDirty = true;
+    renderer->drawContext.boundTexture = NULL;
+}
+
+static void C3D_finishAtlasDraws(N3DSRenderer* renderer) {
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
     if (resumeFrame) {
-        renderer->drawContext.frameActive = true;
-        if (renderer->topTarget != NULL) renderer->topTarget->used = topUsed;
-        if (renderer->bottomTarget != NULL) renderer->bottomTarget->used = bottomUsed;
-        renderer->drawContext.bufferDirty = true;
-        renderer->drawContext.stateDirty = true;
-        renderer->drawContext.projectionDirty = true;
-        renderer->drawContext.boundTexture = NULL;
+        C3D_resumeDrawFrame(renderer);
     } else {
+        C3D_FrameBegin(0);
         C3D_FrameEnd(0);
     }
 }
@@ -3911,7 +3911,6 @@ static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface
     if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
     if (!allowLinearFallback) return false;
 
-    bool synchronized = false;
     bool reclaimed = false;
     ptrdiff_t pendingCount = arrlen(renderer->pendingSurfaceFrees);
     ptrdiff_t retainedCount = 0;
@@ -3920,10 +3919,6 @@ static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface
         if (surfaceID == renderer->currentTargetSurfaceId) {
             renderer->pendingSurfaceFrees[retainedCount++] = surfaceID;
             continue;
-        }
-        if (!synchronized) {
-            C3D_syncGpuIfDrawing(renderer);
-            synchronized = true;
         }
         C3D_destroySurfaceSlotNow(renderer, surfaceID);
         reclaimed = true;
@@ -3943,10 +3938,6 @@ static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface
         arrsetlen(
             renderer->freeSurfaceSpriteSurfaces, arrlen(renderer->freeSurfaceSpriteSurfaces) - 1);
         if (C3D_surfaceIdIsLive(renderer, surfaceID)) {
-            if (!synchronized) {
-                C3D_syncGpuIfDrawing(renderer);
-                synchronized = true;
-            }
             C3D_destroySurfaceSlotNow(renderer, surfaceID);
         }
         if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
@@ -4169,6 +4160,11 @@ static void C3D_destroySurfaceSlotNow(N3DSRenderer* renderer, int32_t surfaceID)
         !renderer->surfaces[surfaceID].used)
         return;
     N3DSSurface* surface = &renderer->surfaces[surfaceID];
+    bool resumeFrame = false;
+    if (surface->target != NULL)
+        resumeFrame = C3D_suspendDrawFrame(renderer);
+    else
+        C3D_finishAtlasDraws(renderer);
     if (renderer->currentTargetSurfaceId == surfaceID) renderer->currentTargetSurfaceId = INT32_MIN;
     if (renderer->hostCaptureSurfaceId == surfaceID) renderer->hostCaptureSurfaceId = -1;
     if (renderer->bottomSurfaceId == surfaceID) renderer->bottomSurfaceId = -1;
@@ -4176,11 +4172,11 @@ static void C3D_destroySurfaceSlotNow(N3DSRenderer* renderer, int32_t surfaceID)
     if (surface->target != NULL) C3D_RenderTargetDelete(surface->target);
     C3D_TexDelete(&surface->tex);
     memset(surface, 0, sizeof(*surface));
+    if (resumeFrame) C3D_resumeDrawFrame(renderer);
 }
 
 static void C3D_destroySurfaceSlot(N3DSRenderer* renderer, int32_t surfaceID) {
     if (!C3D_surfaceIdIsLive(renderer, surfaceID)) return;
-    C3D_syncGpuIfDrawing(renderer);
     C3D_destroySurfaceSlotNow(renderer, surfaceID);
 }
 
