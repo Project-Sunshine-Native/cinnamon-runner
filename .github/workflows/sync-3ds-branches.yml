@@ -1,0 +1,55 @@
+name: Sync 3DS branches with main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync ${{ matrix.branch }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        branch:
+          - old_3ds_runner_optimizations
+          - undertale3DS
+    concurrency:
+      group: sync-main-to-${{ matrix.branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.branch }}
+          fetch-depth: 0
+
+      - name: Merge main and push
+        env:
+          TARGET_BRANCH: ${{ matrix.branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "${TARGET_BRANCH} already includes main." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! git merge --no-edit -m "Merge main into ${TARGET_BRANCH}" origin/main; then
+            git merge --abort
+            echo "::error::Merge main into ${TARGET_BRANCH} manually to resolve the conflict, then push that branch."
+            echo "${TARGET_BRANCH}: merge conflict; remote branch was not updated." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          echo "Merged main into ${TARGET_BRANCH}." >> "$GITHUB_STEP_SUMMARY"
