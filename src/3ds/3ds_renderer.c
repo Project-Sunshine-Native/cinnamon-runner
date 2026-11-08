@@ -1227,6 +1227,19 @@ static bool C3D_axisRectVisible(
     return maxX > clipLeft && minX < clipRight && maxY > clipTop && minY < clipBottom;
 }
 
+bool C3D_getTileCullRect(const Renderer* base, float rect[4]) {
+    const N3DSRenderer* renderer = (const N3DSRenderer*)base;
+    if (!renderer->viewCullActive || renderer->screenTransformActive ||
+        renderer->currentViewAngle != 0.0f || renderer->currentViewW <= 0 ||
+        renderer->currentViewH <= 0) return false;
+
+    rect[0] = (float)renderer->currentViewX;
+    rect[1] = (float)renderer->currentViewY;
+    rect[2] = rect[0] + (float)renderer->currentViewW;
+    rect[3] = rect[1] + (float)renderer->currentViewH;
+    return true;
+}
+
 static void C3D_emitMappedQuad(N3DSRenderer* renderer, C3D_Tex* tex,
     const N3DSUVRect* rect, const N3DSDrawMapper* mapper, float srcLeft, float srcTop,
     float srcRight, float srcBottom, float dstLeft, float dstTop, float dstRight, float dstBottom,
@@ -3048,10 +3061,8 @@ static void C3D_drawTileResolved(
         tile->alpha);
 }
 
-static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float offsetY) {
-    assert(base != NULL);
-    N3DSRenderer* renderer = (N3DSRenderer*)base;
-    if (tile == NULL) return;
+bool C3D_roomTileVisible(const Renderer* base, const RoomTile* tile, float offsetX, float offsetY) {
+    const N3DSRenderer* renderer = (const N3DSRenderer*)base;
     if (!renderer->screenTransformActive) {
         float x1 = (float)tile->x + offsetX;
         float y1 = (float)tile->y + offsetY;
@@ -3061,9 +3072,15 @@ static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float of
         float maxX = x1 > x2 ? x1 : x2;
         float minY = y1 < y2 ? y1 : y2;
         float maxY = y1 > y2 ? y1 : y2;
-        if (!C3D_axisRectVisible(renderer, minX, minY, maxX, maxY))
-            return;
+        return C3D_axisRectVisible(renderer, minX, minY, maxX, maxY);
     }
+    return true;
+}
+
+static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float offsetY) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    if (tile == NULL || !C3D_roomTileVisible(base, tile, offsetX, offsetY)) return;
     const N3DSRoomManifestTileRef* roomRef = C3D_findRoomTileRef(renderer, tile);
     const N3DSAtlasTileEntry* entry =
         roomRef != NULL && roomRef->tileEntryIndex < renderer->atlas.tileEntryCount

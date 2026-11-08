@@ -10,6 +10,9 @@
 #include "collision.h"
 #include "video.h"
 #include "fmod/fmod.h"
+#ifdef PLATFORM_3DS
+#include "3ds/3ds_renderer.h"
+#endif
 
 #include <stdint.h>
 #include "stdio_compat.h"
@@ -755,8 +758,26 @@ void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerO
     uint32_t borderY = tileset->gms2OutputBorderY;
     uint32_t columns = tileset->gms2TileColumns;
 
-    repeat(data->tilesY, ty) {
-        repeat(data->tilesX, tx) {
+    uint32_t firstX = 0, firstY = 0;
+    uint32_t endX = data->tilesX, endY = data->tilesY;
+#ifdef PLATFORM_3DS
+    float view[4];
+    if (C3D_getTileCullRect(runner->renderer, view) &&
+        isfinite(layerOffsetX) && isfinite(layerOffsetY)) {
+        // Rotated non-square tiles can extend beyond their grid cell.
+        float padding = (float)(tileW > tileH ? tileW : tileH);
+        double left = floor(((double)view[0] - layerOffsetX - padding) / tileW);
+        double top = floor(((double)view[1] - layerOffsetY - padding) / tileH);
+        double right = ceil(((double)view[2] - layerOffsetX + padding) / tileW);
+        double bottom = ceil(((double)view[3] - layerOffsetY + padding) / tileH);
+        firstX = (uint32_t)fmax(0.0, fmin((double)data->tilesX, left));
+        firstY = (uint32_t)fmax(0.0, fmin((double)data->tilesY, top));
+        endX = (uint32_t)fmax(0.0, fmin((double)data->tilesX, right));
+        endY = (uint32_t)fmax(0.0, fmin((double)data->tilesY, bottom));
+    }
+#endif
+    for (uint32_t ty = firstY; ty < endY; ty++) {
+        for (uint32_t tx = firstX; tx < endX; tx++) {
             uint32_t cell = data->tileData[ty * data->tilesX + tx];
             uint32_t tileIndex = cell & GMS2_TILE_INDEX_MASK;
             if (tileIndex == 0) continue; // 0 = empty
@@ -1120,6 +1141,12 @@ void Runner_draw(Runner* runner) {
                 repeat(data->legacyTileCount, j) {
                     if (runner->renderer != nullptr) {
                         RoomTile* tile = &data->legacyTiles[j];
+#ifdef PLATFORM_3DS
+                        ptrdiff_t cullLayerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
+                        float cullOffsetX = cullLayerIdx >= 0 ? runner->tileLayerMap[cullLayerIdx].value.offsetX : 0.0f;
+                        float cullOffsetY = cullLayerIdx >= 0 ? runner->tileLayerMap[cullLayerIdx].value.offsetY : 0.0f;
+                        if (!C3D_roomTileVisible(runner->renderer, tile, cullOffsetX, cullOffsetY)) continue;
+#endif
                         // Find the matching RuntimeLayerElement so we can honor per-element visibility
                         RuntimeLayerElement* tileEl = nullptr;
                         repeat(tileElementCount, k) {
