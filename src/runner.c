@@ -1612,10 +1612,6 @@ static Instance** takePersistentInstances(Runner* runner) {
             }
 #endif
 
-            // The spatial grid is recreated per room, so any cell coordinates the instance was tracking belong to the old grid and must not be reused.
-            arrsetlen(inst->collisionCells, 0);
-            inst->spatialGridDirty = false;
-
             arrput(carriedPersistent, inst);
         } else {
 #ifdef ENABLE_VM_TRACING
@@ -1638,6 +1634,8 @@ static Instance** takePersistentInstances(Runner* runner) {
 
     for (int32_t carriedIndex = 0; carriedIndex < arrlen(carriedPersistent);) {
         Instance* inst = carriedPersistent[carriedIndex];
+        SpatialGrid_removeInstance(runner->spatialGrid, inst);
+        inst->spatialGridDirty = false;
         if (inst->destroyed) {
             hmdel(runner->instancesById, inst->instanceId);
             Instance_free(inst);
@@ -4309,8 +4307,11 @@ static void persistRoomState(Runner* runner, int32_t roomIndex) {
         if (inst->persistent) {
             arrput(keptInstances, inst);
         } else if (inst->active) {
+            SpatialGrid_removeInstance(runner->spatialGrid, inst);
+            inst->spatialGridDirty = false;
             arrput(state->instances, inst);
         } else {
+            SpatialGrid_removeInstance(runner->spatialGrid, inst);
             hmdel(runner->instancesById, inst->instanceId);
             Instance_free(inst);
         }
