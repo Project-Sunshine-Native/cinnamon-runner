@@ -2340,7 +2340,7 @@ static void parseROOM(BinaryReader* reader, DataWin* dw, bool lazyLoadRooms, Str
 
             for (uint32_t layerNum = 0; layerNum < layerCount; layerNum++) {
                 size_t layerPtr = (size_t)(layersPtr + 4 + (4 * layerNum));
-                BinaryReader_seek(reader, layerPtr + 4);
+                BinaryReader_seek(reader, layerPtr);
 
                 uint32_t jumpOffset = BinaryReader_readUint32(reader) + 8;
                 uint32_t nextOffset = (layerNum == layerCount - 1) ? seqnPtr : BinaryReader_readUint32(reader);
