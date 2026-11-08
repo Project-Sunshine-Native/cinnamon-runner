@@ -76,7 +76,7 @@ static void overlayBeginFontFrame(WiiOverlay* overlay) {
 static void overlayDrawCredits(WiiOverlay* overlay) {
     WiiFont_printScaled(overlay->font, 10.0f, 460.0f, 0.36f, WII_OVERLAY_DARK_GRAY,
         255u,
-        "Cinnamon created by Grayforz2468/Project Sunhine, fork of Butterscotch by MrPowerGamerBR "
+        "Cinnamon created by Grayforz2468/Project Sunshine, fork of Butterscotch by MrPowerGamerBR "
         "(https://mrpowergamerbr.com/)");
 }
 
