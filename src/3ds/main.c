@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#define N3DS_ENABLE_TOUCH_MOUSE 0
+#define N3DS_ENABLE_TOUCH_MOUSE 1
 #define N3DS_ATLAS_MAGIC 0x5441334Eu
 #define N3DS_ATLAS_VERSION 2u
 #define N3DS_KEY_MAPPING_COUNT 21
