@@ -441,15 +441,16 @@ void n3ds_overlayUpdate(const N3DSOverlayTimings* timing) {
                         : 0.0f;
 }
 
-void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
+void n3ds_overlayDraw(Renderer* renderer, const Runner* runner, bool gameOnBottomScreen) {
 #if !N3DS_HAS_BOTTOM_TARGET
     (void)renderer;
     (void)runner;
+    (void)gameOnBottomScreen;
     return;
 #endif
     if (renderer == NULL) return;
 #if !N3DS_DISABLE_GAME_BOTTOM_SCREEN
-    if (C3D_bottomScreenUsed(renderer)) return;
+    if (!gameOnBottomScreen && C3D_bottomScreenUsed(renderer)) return;
 #endif
 
     const N3DSFrameStatsOverlay* stats = &gN3DSFrameStatsOverlay;
@@ -527,7 +528,10 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             (long)(runner != NULL ? arrlen(runner->structInstances) : 0));
     }
 
-    C3D_beginBottomOverlay(renderer, 320, 240, true);
+    if (gameOnBottomScreen)
+        C3D_beginTopOverlay(renderer, 400, 240);
+    else
+        C3D_beginBottomOverlay(renderer, 320, 240, true);
     n3ds_overlayDrawText(
         renderer, text, 8.0f, 8.0f, 1.0f, 0.0f, C2D_Color32(255, 255, 255, 255));
     C3D_endBottomScreenGUI(renderer);

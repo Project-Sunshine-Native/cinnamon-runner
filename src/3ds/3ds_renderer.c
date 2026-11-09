@@ -6073,9 +6073,42 @@ void C3D_clearBottomScreen(MAYBE_UNUSED Renderer* renderer) {
 #endif
 }
 
+void C3D_beginTopOverlay(Renderer* renderer, int32_t guiW, int32_t guiH) {
+    if (renderer == NULL) return;
+    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
+    if (n3ds->topTarget == NULL) return;
+    C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, false);
+    C3D_RenderTargetClear(n3ds->topTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
+    renderer->CPortX = 0;
+    renderer->CPortY = 0;
+    renderer->CPortW = N3DS_TOP_WIDTH;
+    renderer->CPortH = N3DS_TOP_HEIGHT;
+    n3ds->currentLogicalPortX = 0;
+    n3ds->currentLogicalPortY = 0;
+    n3ds->currentLogicalPortW = N3DS_TOP_WIDTH;
+    n3ds->currentLogicalPortH = N3DS_TOP_HEIGHT;
+    renderer->vtable->setGuiProjection(
+        renderer, guiW, guiH, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT, false);
+}
+
+void C3D_clearTopScreen(Renderer* renderer) {
+    if (renderer == NULL) return;
+    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
+    if (n3ds->topTarget == NULL) return;
+    n3ds_c3dFlush(&n3ds->drawContext);
+    C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, false);
+    C3D_RenderTargetClear(n3ds->topTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
+}
+
 void C3D_setGameOnBottomScreen(Renderer* renderer, bool enabled) {
     if (renderer == NULL) return;
-    ((N3DSRenderer*)renderer)->gameOnBottomScreen = enabled;
+    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
+#if N3DS_HAS_BOTTOM_TARGET
+    if (enabled && !C3D_ensureBottomTarget(n3ds)) return;
+#else
+    if (enabled) return;
+#endif
+    n3ds->gameOnBottomScreen = enabled;
 }
 
 void C3D_skipTopScreenPresent(Renderer* renderer) {

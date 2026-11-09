@@ -19,7 +19,7 @@ typedef struct {
 
 void n3ds_overlayReset(void);
 void n3ds_overlayUpdate(const N3DSOverlayTimings* timing);
-void n3ds_overlayDraw(Renderer* renderer, const Runner* runner);
+void n3ds_overlayDraw(Renderer* renderer, const Runner* runner, bool gameOnBottomScreen);
 void n3ds_overlayDrawText(Renderer* renderer,
     const char* text, float x, float y, float scale, float maxWidth, uint32_t color);
 void n3ds_overlayFree(void);

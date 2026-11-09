@@ -27,6 +27,8 @@ typedef struct {
 
 bool C3D_isReady(Renderer* renderer);
 const char* C3D_getStartupError(Renderer* renderer);
+void C3D_beginTopOverlay(Renderer* renderer, int32_t guiW, int32_t guiH);
+void C3D_clearTopScreen(Renderer* renderer);
 void C3D_beginBottomOverlay(
     Renderer* renderer, int32_t guiW, int32_t guiH, bool clearIfUnused);
 void C3D_presentBottomSurface(Renderer* renderer);

@@ -730,9 +730,8 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
     if ((down & KEY_START) && !(held & KEY_SELECT)) {
         app->gameOnBottomScreen = !app->gameOnBottomScreen;
         C3D_setGameOnBottomScreen(app->session.renderer, app->gameOnBottomScreen);
-        if (app->gameOnBottomScreen) app->debugMonitorVisible = false;
     }
-    if ((down & KEY_SELECT) && !(held & KEY_START) && !app->gameOnBottomScreen) {
+    if ((down & KEY_SELECT) && !(held & KEY_START)) {
         app->debugMonitorVisible = !app->debugMonitorVisible;
         if (app->debugMonitorVisible) n3ds_overlayReset();
     }
@@ -804,14 +803,18 @@ static void n3ds_appDrawFrameOverlay(
     if (app->debugMonitorVisible) {
         timing->workEndTick = svcGetSystemTick();
         n3ds_overlayUpdate(timing);
-        n3ds_overlayDraw(renderer, runner);
+        n3ds_overlayDraw(renderer, runner, app->gameOnBottomScreen);
 #if N3DS_HAS_BOTTOM_TARGET
-        if (C3D_bottomScreenUsed(renderer)) app->bottomScreenDisabledNeedsClear = true;
+        if (!app->gameOnBottomScreen && C3D_bottomScreenUsed(renderer))
+            app->bottomScreenDisabledNeedsClear = true;
 #endif
         return;
     }
 #if N3DS_HAS_BOTTOM_TARGET
-    if (app->gameOnBottomScreen) return;
+    if (app->gameOnBottomScreen) {
+        C3D_clearTopScreen(renderer);
+        return;
+    }
     if (!C3D_bottomScreenUsed(renderer)) {
         if (app->bottomScreenDisabledNeedsClear) {
             C3D_clearBottomScreen(renderer);
