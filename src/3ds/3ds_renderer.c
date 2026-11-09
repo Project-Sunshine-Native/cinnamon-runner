@@ -23,6 +23,10 @@
 #define N3DS_MAX_TEXTURE_SIZE 1024
 #define N3DS_MAX_APPLICATION_SURFACE_WIDTH 640
 #define N3DS_MAX_APPLICATION_SURFACE_HEIGHT 480
+// The display engine cannot convert a tiled 16-bit source to RGB8: the transfer
+// never signals completion on hardware. Keep host targets RGBA8; surfaces may
+// still use RGBA4 and are sampled by the GPU before this final display transfer.
+// https://www.3dbrew.org/wiki/GPU/External_Registers#Tiled_to_linear
 #define N3DS_TRANSFER_FLAGS                                                                        \
     (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |               \
         GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |                                             \
@@ -356,7 +360,6 @@ typedef struct {
     C3D_RenderTarget* topTarget;
     C3D_RenderTarget* bottomTarget;
     bool bottomScreenUsedThisFrame;
-    bool gameOnBottomScreen;
     int32_t currentTargetSurfaceId;
     bool currentHostTargetIsBottomScreen;
     int32_t applicationSurfaceId;
@@ -389,6 +392,7 @@ typedef struct {
     int32_t currentViewW;
     int32_t currentViewH;
     float currentViewAngle;
+    Matrix4f tilemapViewProjection;
     int32_t currentLogicalPortX;
     int32_t currentLogicalPortY;
     int32_t currentLogicalPortW;
@@ -424,6 +428,7 @@ struct N3DSRenderStateSnapshot {
     int32_t viewW;
     int32_t viewH;
     float viewAngle;
+    Matrix4f tilemapViewProjection;
     int32_t cameraCurrent;
     Matrix4f gmlMatrices[MATRICES_MAX];
     N3DSRenderState renderState;
@@ -595,6 +600,7 @@ static void C3D_saveRenderState(N3DSRenderer* renderer, N3DSRenderStateSnapshot*
     out->viewW = renderer->currentViewW;
     out->viewH = renderer->currentViewH;
     out->viewAngle = renderer->currentViewAngle;
+    out->tilemapViewProjection = renderer->tilemapViewProjection;
     out->cameraCurrent = renderer->base.cameraCurrent;
     memcpy(out->gmlMatrices, renderer->base.gmlMatrices, sizeof(out->gmlMatrices));
     out->renderState = renderer->renderState;
@@ -655,6 +661,7 @@ static void C3D_restoreViewState(
     renderer->currentViewW = state->viewW;
     renderer->currentViewH = state->viewH;
     renderer->currentViewAngle = state->viewAngle;
+    renderer->tilemapViewProjection = state->tilemapViewProjection;
     renderer->base.cameraCurrent = state->cameraCurrent;
     memcpy(renderer->base.gmlMatrices, state->gmlMatrices, sizeof(state->gmlMatrices));
 }
@@ -1226,19 +1233,6 @@ static bool C3D_axisRectVisible(
     }
     if (clipRight <= clipLeft || clipBottom <= clipTop) return true;
     return maxX > clipLeft && minX < clipRight && maxY > clipTop && minY < clipBottom;
-}
-
-bool C3D_getTileCullRect(const Renderer* base, float rect[4]) {
-    const N3DSRenderer* renderer = (const N3DSRenderer*)base;
-    if (!renderer->viewCullActive || renderer->screenTransformActive ||
-        renderer->currentViewAngle != 0.0f || renderer->currentViewW <= 0 ||
-        renderer->currentViewH <= 0) return false;
-
-    rect[0] = (float)renderer->currentViewX;
-    rect[1] = (float)renderer->currentViewY;
-    rect[2] = rect[0] + (float)renderer->currentViewW;
-    rect[3] = rect[1] + (float)renderer->currentViewH;
-    return true;
 }
 
 static void C3D_emitMappedQuad(N3DSRenderer* renderer, C3D_Tex* tex,
@@ -2935,7 +2929,7 @@ static bool C3D_drawMappedAtlasTile(N3DSRenderer* renderer,
 }
 
 static bool C3D_drawAtlasTileEntry(N3DSRenderer* renderer, const N3DSAtlasTileEntry* entry,
-    const RoomTile* tile, float offsetX, float offsetY) {
+    const RoomTile* tile, float offsetX, float offsetY, float alpha) {
     if (entry == NULL || tile == NULL || entry->srcW == 0u || entry->srcH == 0u)
         return false;
     N3DSDrawMapper mapper;
@@ -2958,7 +2952,7 @@ static bool C3D_drawAtlasTileEntry(N3DSRenderer* renderer, const N3DSAtlasTileEn
             float v1 = page->region.top + (float)entry->y * page->vPerPixel;
             float u2 = u1 + (float)entry->width * page->uPerPixel;
             float v2 = v1 + (float)entry->height * page->vPerPixel;
-            uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, tile->alpha);
+            uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, alpha);
             const N3DSVertex vertices[4] = {
                 {{x1, y1}, {u1, v1}},
                 {{x2, y1}, {u2, v1}},
@@ -2981,7 +2975,7 @@ static bool C3D_drawAtlasTileEntry(N3DSRenderer* renderer, const N3DSAtlasTileEn
             (float)(entry->x + entry->width), (float)(entry->y + entry->height));
         region.width = entry->srcW;
         region.height = entry->srcH;
-        uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, tile->alpha);
+        uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, alpha);
         C3D_emitMappedQuadSprite(renderer, &page->tex, &region, &mapper, 0.0f, 0.0f,
             (float)entry->srcW, (float)entry->srcH, 0.0f, 0.0f, (float)entry->srcW,
             (float)entry->srcH, rgba, rgba, rgba, rgba);
@@ -2990,7 +2984,7 @@ static bool C3D_drawAtlasTileEntry(N3DSRenderer* renderer, const N3DSAtlasTileEn
 
     if (entry->fragmentCount == 0u || entry->fragmentStart >= renderer->atlas.fragmentCount)
         return false;
-    uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, tile->alpha);
+    uint32_t rgba = C3D_makeColor(tile->color & 0x00FFFFFFu, alpha);
     for (uint32_t i = 0; i < entry->fragmentCount; ++i) {
         uint32_t fragmentIndex = entry->fragmentStart + i;
         if (fragmentIndex >= renderer->atlas.fragmentCount) break;
@@ -3024,7 +3018,7 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
     float angleDeg, float pivotX, float pivotY, uint32_t color, float alpha);
 
 static void C3D_drawTileResolved(
-    Renderer* base, RoomTile* tile, float offsetX, float offsetY, int32_t tpagIndex) {
+    Renderer* base, const RoomTile* tile, float offsetX, float offsetY, int32_t tpagIndex, float alpha) {
     if (base->dataWin == NULL || tile == NULL) return;
     if (tpagIndex < 0 || (uint32_t)tpagIndex >= base->dataWin->tpag.count) return;
 
@@ -3059,11 +3053,13 @@ static void C3D_drawTileResolved(
 
     C3D_drawSpritePart(base, tpagIndex, srcX - tpag->targetX, srcY - tpag->targetY, srcW,
         srcH, drawX, drawY, tile->scaleX, tile->scaleY, 0.0f, 0.0f, 0.0f, tile->color & 0x00FFFFFFu,
-        tile->alpha);
+        alpha);
 }
 
-bool C3D_roomTileVisible(const Renderer* base, const RoomTile* tile, float offsetX, float offsetY) {
-    const N3DSRenderer* renderer = (const N3DSRenderer*)base;
+static void C3D_drawTileWithAlpha(Renderer* base, const RoomTile* tile, float offsetX, float offsetY, float alpha) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    if (tile == NULL) return;
     if (!renderer->screenTransformActive) {
         float x1 = (float)tile->x + offsetX;
         float y1 = (float)tile->y + offsetY;
@@ -3073,15 +3069,9 @@ bool C3D_roomTileVisible(const Renderer* base, const RoomTile* tile, float offse
         float maxX = x1 > x2 ? x1 : x2;
         float minY = y1 < y2 ? y1 : y2;
         float maxY = y1 > y2 ? y1 : y2;
-        return C3D_axisRectVisible(renderer, minX, minY, maxX, maxY);
+        if (!C3D_axisRectVisible(renderer, minX, minY, maxX, maxY))
+            return;
     }
-    return true;
-}
-
-static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float offsetY) {
-    assert(base != NULL);
-    N3DSRenderer* renderer = (N3DSRenderer*)base;
-    if (tile == NULL || !C3D_roomTileVisible(base, tile, offsetX, offsetY)) return;
     const N3DSRoomManifestTileRef* roomRef = C3D_findRoomTileRef(renderer, tile);
     const N3DSAtlasTileEntry* entry =
         roomRef != NULL && roomRef->tileEntryIndex < renderer->atlas.tileEntryCount
@@ -3090,12 +3080,16 @@ static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float of
     if (entry == NULL && (roomRef == NULL || roomRef->tpagIndex < 0)) {
         entry = C3D_findAtlasTileEntry(renderer, tile);
     }
-    if (entry != NULL && C3D_drawAtlasTileEntry(renderer, entry, tile, offsetX, offsetY))
+    if (entry != NULL && C3D_drawAtlasTileEntry(renderer, entry, tile, offsetX, offsetY, alpha))
         return;
     int32_t tpagIndex = roomRef != NULL && roomRef->tpagIndex >= 0
                             ? roomRef->tpagIndex
                             : Renderer_resolveObjectTPAGIndex(base->dataWin, tile);
-    C3D_drawTileResolved(base, tile, offsetX, offsetY, tpagIndex);
+    C3D_drawTileResolved(base, tile, offsetX, offsetY, tpagIndex, alpha);
+}
+
+static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float offsetY) {
+    if (tile != NULL) C3D_drawTileWithAlpha(base, tile, offsetX, offsetY, tile->alpha);
 }
 
 static bool C3D_isNativeScreenOverride(
@@ -3704,6 +3698,51 @@ static void C3D_drawText(Renderer* base, const char* text, float x, float y, flo
         base->drawAlpha, lineSeparation);
 }
 
+static void C3D_drawGlyphFast(Renderer* base, uint16_t character, float x, float y,
+    float xscale, float yscale) {
+    if (base == NULL || base->dataWin == NULL || base->drawAlpha <= 0.0f) return;
+    int32_t fontIndex = base->drawFont;
+    if (fontIndex < 0 || (uint32_t)fontIndex >= base->dataWin->font.count) return;
+
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    Font* font = &base->dataWin->font.fonts[fontIndex];
+    FontGlyph* glyph = TextUtils_findGlyph(font, character);
+    N3DSFontState state;
+    if (glyph == NULL || !C3D_resolveFontState(renderer, base->dataWin, font, &state)) return;
+
+    N3DSDrawMapper mapper;
+    C3D_mapInitAxis(&mapper, x, y, xscale * font->scaleX, yscale * font->scaleY);
+    uint32_t rgba = C3D_makeColor(base->drawColor, base->drawAlpha);
+    (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
+        -(float)font->ascenderOffset, &mapper, rgba);
+}
+
+static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, int32_t count,
+    float xscale, float yscale) {
+    if (base == NULL || base->dataWin == NULL || glyphs == NULL || count <= 0 ||
+        base->drawAlpha <= 0.0f) return;
+    int32_t fontIndex = base->drawFont;
+    if (fontIndex < 0 || (uint32_t)fontIndex >= base->dataWin->font.count) return;
+
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    Font* font = &base->dataWin->font.fonts[fontIndex];
+    N3DSFontState state;
+    if (!C3D_resolveFontState(renderer, base->dataWin, font, &state)) return;
+    float scaleX = xscale * font->scaleX;
+    float scaleY = yscale * font->scaleY;
+    float cursorY = -(float)font->ascenderOffset;
+
+    for (int32_t i = 0; i < count; ++i) {
+        FontGlyph* glyph = TextUtils_findGlyph(font, glyphs[i].character);
+        if (glyph == NULL) continue;
+        N3DSDrawMapper mapper;
+        C3D_mapInitAxis(&mapper, glyphs[i].x, glyphs[i].y, scaleX, scaleY);
+        uint32_t rgba = C3D_makeColor(glyphs[i].color, base->drawAlpha);
+        (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
+            cursorY, &mapper, rgba);
+    }
+}
+
 static void C3D_drawTextColor(Renderer* base, const char* text, float x, float y,
     float xscale, float yscale, float angleDeg, int32_t c1, MAYBE_UNUSED int32_t c2,
     MAYBE_UNUSED int32_t c3, MAYBE_UNUSED int32_t c4, float alpha, float lineSeparation) {
@@ -3854,15 +3893,13 @@ static void C3D_getAppSurfaceSize(
 }
 
 static void C3D_bindTopScreenTarget(N3DSRenderer* renderer) {
-    C3D_bindTarget(renderer, RENDER_TARGET_HOST_FRAMEBUFFER, renderer->gameOnBottomScreen);
-    if (renderer->gameOnBottomScreen) renderer->bottomScreenUsedThisFrame = true;
-    n3ds_c3dUpdateProjection(&renderer->drawContext,
-        renderer->gameOnBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
+    C3D_bindTarget(renderer, RENDER_TARGET_HOST_FRAMEBUFFER, false);
+    n3ds_c3dUpdateProjection(&renderer->drawContext, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
     renderer->screenTransformActive = false;
     renderer->customCameraTransformActive = false;
     renderer->currentLogicalPortX = 0;
     renderer->currentLogicalPortY = 0;
-    renderer->currentLogicalPortW = renderer->gameOnBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH;
+    renderer->currentLogicalPortW = N3DS_TOP_WIDTH;
     renderer->currentLogicalPortH = N3DS_TOP_HEIGHT;
 }
 
@@ -3898,19 +3935,8 @@ static void C3D_blitAppSurface(N3DSRenderer* renderer) {
     float top = 0.0f;
     float right = (float)N3DS_TOP_WIDTH;
     float bottom = (float)N3DS_TOP_HEIGHT;
-    if (renderer->gameOnBottomScreen) {
-        float scale = fmaxf((float)N3DS_BOTTOM_WIDTH / renderer->frameGameW,
-            (float)N3DS_BOTTOM_HEIGHT / renderer->frameGameH);
-        float w = renderer->frameGameW * scale;
-        float h = renderer->frameGameH * scale;
-        left = (N3DS_BOTTOM_WIDTH - w) * 0.5f;
-        top = (N3DS_BOTTOM_HEIGHT - h) * 0.5f;
-        right = left + w;
-        bottom = top + h;
-    } else {
-        C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH, N3DS_TOP_WIDTH,
-            N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
-    }
+    C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH, N3DS_TOP_WIDTH,
+        N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
     float u1 = surface->texWidth > 0 ? (float)surface->width / (float)surface->texWidth : 1.0f;
     float v0 = surface->texHeight > 0
         ? (float)(surface->texHeight - surface->height) / (float)surface->texHeight
@@ -4081,6 +4107,16 @@ static bool C3D_resizeAppSurface(
 static int32_t C3D_createSurface(Renderer* base, int32_t width, int32_t height) {
     assert(base != NULL);
     return C3D_createSurfaceStorage(base, width, height, true);
+}
+
+static int32_t C3D_createSurfaceExt(Renderer* base, int32_t width, int32_t height, const char* name) {
+    if (name == NULL || strcmp(name, "cinnamonBottomSurface") != 0)
+        return C3D_createSurface(base, width, height);
+    // This is a user surface: keep its full 320x240 size even with APPSURFACE-HALF.
+    int32_t surfaceID = C3D_createSurfaceStorageEx(
+        base, width, height, width, height, true, GPU_RGBA4, true, true);
+    if (surfaceID >= 0) ((N3DSRenderer*)base)->bottomSurfaceId = surfaceID;
+    return surfaceID;
 }
 
 static bool C3D_surfaceIdIsLive(const N3DSRenderer* renderer, int32_t surfaceID) {
@@ -5532,6 +5568,7 @@ static void C3D_setViewProjection(Renderer* base, float viewX, float viewY,
     Matrix4f projection;
     Matrix4f_identity(&view);
     Matrix4f_viewProjection(&projection, viewX, viewY, viewW, viewH, viewAngle);
+    ((N3DSRenderer*)base)->tilemapViewProjection = projection;
     C3D_updateGmlMatrixState(base, &view, &projection, NULL);
 }
 
@@ -5808,6 +5845,33 @@ static void C3D_endGUI(MAYBE_UNUSED Renderer* base) {
     n3ds_c3dFlush(&renderer->drawContext);
 }
 
+static bool C3D_getTilemapDrawBounds(const Renderer* base, float bounds[4]) {
+    const N3DSRenderer* renderer = (const N3DSRenderer*)base;
+    if (!renderer->viewCullActive || renderer->screenTransformActive ||
+        renderer->customCameraTransformActive || renderer->currentViewAngle != 0.0f ||
+        renderer->currentViewW <= 0 || renderer->currentViewH <= 0 ||
+        base->CPortW <= 0 || base->CPortH <= 0)
+        return false;
+
+    // matrix_set can change the projection without changing the view rectangle.
+    // Only cull when that rectangle still describes the active GML transform.
+    for (int i = 0; i < 16; i++) {
+        if (base->gmlMatrices[MATRIX_WORLD_VIEW_PROJECTION].m[i] !=
+            renderer->tilemapViewProjection.m[i])
+            return false;
+    }
+
+    // Sprite snapping can move a tile by one physical pixel, especially with a
+    // half-resolution application surface. Keep those boundary cells visible.
+    float marginX = fmaxf(1.0f, (float)renderer->currentViewW / (float)base->CPortW);
+    float marginY = fmaxf(1.0f, (float)renderer->currentViewH / (float)base->CPortH);
+    bounds[0] = (float)renderer->currentViewX - marginX;
+    bounds[1] = (float)renderer->currentViewY - marginY;
+    bounds[2] = (float)renderer->currentViewX + (float)renderer->currentViewW + marginX;
+    bounds[3] = (float)renderer->currentViewY + (float)renderer->currentViewH + marginY;
+    return true;
+}
+
 static RendererVtable gN3DSRendererVtable = {
     .init = C3D_init,
     .destroy = C3D_destroy,
@@ -5829,6 +5893,8 @@ static RendererVtable gN3DSRendererVtable = {
     .drawTriangle = C3D_drawTriangle,
     .drawLineColor = C3D_drawLineColor,
     .drawText = C3D_drawText,
+    .drawGlyph = C3D_drawGlyphFast,
+    .drawGlyphRun = C3D_drawGlyphRunFast,
     .drawTextColor = C3D_drawTextColor,
     .flush = C3D_flush,
     .clearScreen = C3D_clearActive,
@@ -5847,8 +5913,11 @@ static RendererVtable gN3DSRendererVtable = {
     .gpuGetBlendEnable = C3D_gpuGetBlendEnable,
     .gpuSetFog = C3D_gpuSetFog,
     .drawTile = C3D_drawTile,
+    .drawTileWithAlpha = C3D_drawTileWithAlpha,
+    .getTilemapDrawBounds = C3D_getTilemapDrawBounds,
     .drawSpriteTiled = C3D_drawTiled,
     .createSurface = C3D_createSurface,
+    .createSurfaceExt = C3D_createSurfaceExt,
     .surfaceExists = C3D_surfaceExists,
     .setRenderTarget = C3D_setRenderTarget,
     .ensureApplicationSurface = C3D_ensureAppSurface,
@@ -6025,6 +6094,7 @@ void C3D_presentBottomSurface(MAYBE_UNUSED Renderer* renderer) {
         return;
     }
 
+    C3D_beginSurfaceCopyState(n3ds);
     C3D_beginBottomGUIImpl(
         renderer, N3DS_BOTTOM_WIDTH, N3DS_BOTTOM_HEIGHT, true);
     renderer->vtable->drawSurface(renderer, surfaceID, 0, 0, width, height, 0.0f, 0.0f,
@@ -6071,44 +6141,6 @@ void C3D_clearBottomScreen(MAYBE_UNUSED Renderer* renderer) {
     n3ds->bottomScreenUsedThisFrame = true;
     C3D_restoreRenderState(n3ds, &savedState, -1);
 #endif
-}
-
-void C3D_beginTopOverlay(Renderer* renderer, int32_t guiW, int32_t guiH) {
-    if (renderer == NULL) return;
-    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
-    if (n3ds->topTarget == NULL) return;
-    C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, false);
-    C3D_RenderTargetClear(n3ds->topTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
-    renderer->CPortX = 0;
-    renderer->CPortY = 0;
-    renderer->CPortW = N3DS_TOP_WIDTH;
-    renderer->CPortH = N3DS_TOP_HEIGHT;
-    n3ds->currentLogicalPortX = 0;
-    n3ds->currentLogicalPortY = 0;
-    n3ds->currentLogicalPortW = N3DS_TOP_WIDTH;
-    n3ds->currentLogicalPortH = N3DS_TOP_HEIGHT;
-    renderer->vtable->setGuiProjection(
-        renderer, guiW, guiH, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT, false);
-}
-
-void C3D_clearTopScreen(Renderer* renderer) {
-    if (renderer == NULL) return;
-    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
-    if (n3ds->topTarget == NULL) return;
-    n3ds_c3dFlush(&n3ds->drawContext);
-    C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, false);
-    C3D_RenderTargetClear(n3ds->topTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
-}
-
-void C3D_setGameOnBottomScreen(Renderer* renderer, bool enabled) {
-    if (renderer == NULL) return;
-    N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
-#if N3DS_HAS_BOTTOM_TARGET
-    if (enabled && !C3D_ensureBottomTarget(n3ds)) return;
-#else
-    if (enabled) return;
-#endif
-    n3ds->gameOnBottomScreen = enabled;
 }
 
 void C3D_skipTopScreenPresent(Renderer* renderer) {
