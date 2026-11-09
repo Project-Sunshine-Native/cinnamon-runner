@@ -572,8 +572,11 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     }
 
     n3ds_loadSet(&loadingScreen, "Entering first room...", 1, 1);
+    C3D_FrameBegin(0);
+    C3D_beginDrawFrame(session->renderer);
     Runner_initFirstRoom(session->runner);
     C3D_syncRoom(session->renderer, session->runner->currentRoomIndex);
+    C3D_endDrawFrame(session->renderer);
     n3ds_loadSet(&loadingScreen, "Starting frame loop...", 1, 1);
     n3ds_loadFree(&loadingScreen);
     C3D_restoreTopScreenOutput(session->renderer);

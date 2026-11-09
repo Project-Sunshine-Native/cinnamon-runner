@@ -4780,11 +4780,7 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
     if (temp == NULL) {
         return false;
     }
-    n3ds_c3dFlush(&renderer->drawContext);
-    if (renderer->currentTargetSurfaceId == surfaceID) {
-        C3D_safeFrameSplit(renderer);
-        gspWaitForP3D();
-    }
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
     C3D_TexFlush(&surface->tex);
     void* colorBuf = surface->target != NULL && surface->target->frameBuf.colorBuf != NULL
         ? surface->target->frameBuf.colorBuf
@@ -4801,7 +4797,7 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
             GX_TRANSFER_IN_FORMAT(surface->transferFormat) |
             GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
             GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-    gspWaitForPPF();
+    if (resumeFrame) C3D_resumeDrawFrame(renderer);
     size_t srcPitch = (size_t)surface->texWidth * 4u;
     int32_t srcYOffset = C3D_surfaceStorageYOffset(surface);
     int32_t readW = C3D_surfaceLogicalWidth(surface);
