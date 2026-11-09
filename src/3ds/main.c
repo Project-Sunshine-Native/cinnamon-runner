@@ -626,6 +626,7 @@ typedef struct {
     bool keyboardHeld[GML_KEY_COUNT];
     bool citroReady;
     bool debugMonitorVisible;
+    bool gameOnBottomScreen;
 #if N3DS_HAS_BOTTOM_TARGET
     bool bottomScreenDisabledNeedsClear;
 #endif
@@ -726,7 +727,12 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
         C3D_endDrawFrame(app->session.renderer);
         return false;
     }
-    if ((down & KEY_SELECT) && !(held & KEY_START)) {
+    if ((down & KEY_START) && !(held & KEY_SELECT)) {
+        app->gameOnBottomScreen = !app->gameOnBottomScreen;
+        C3D_setGameOnBottomScreen(app->session.renderer, app->gameOnBottomScreen);
+        if (app->gameOnBottomScreen) app->debugMonitorVisible = false;
+    }
+    if ((down & KEY_SELECT) && !(held & KEY_START) && !app->gameOnBottomScreen) {
         app->debugMonitorVisible = !app->debugMonitorVisible;
         if (app->debugMonitorVisible) n3ds_overlayReset();
     }
@@ -760,9 +766,12 @@ static void n3ds_appStepFrame(
 
 static void n3ds_appDrawFrame(N3DSApplication* app, Runner* runner, Renderer* renderer,
     const Gen8* gen8, N3DSOverlayTimings* timing) {
+    int32_t screenW = app->gameOnBottomScreen
+        ? N3DS_BOTTOM_SCREEN_WIDTH : N3DS_TOP_SCREEN_WIDTH;
+    int32_t screenH = N3DS_TOP_SCREEN_HEIGHT;
     if (!runner->appSurfaceEnabled) {
-        runner->applicationWidth = N3DS_TOP_SCREEN_WIDTH;
-        runner->applicationHeight = N3DS_TOP_SCREEN_HEIGHT;
+        runner->applicationWidth = screenW;
+        runner->applicationHeight = screenH;
         runner->usingAppSurface = false;
     } else {
         if (runner->applicationWidth <= 0 || runner->applicationHeight <= 0) {
@@ -777,16 +786,16 @@ static void n3ds_appDrawFrame(N3DSApplication* app, Runner* runner, Renderer* re
     runner->widescreenExtraWidth = 0;
     runner->widescreenExtraHeight = 0;
     timing->drawStartTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
-    Runner_drawPre(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
-    Runner_beginFrame(runner, gameW, gameH, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT,
-        N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
+    Runner_drawPre(runner, screenW, screenH);
+    Runner_beginFrame(runner, gameW, gameH, screenW, screenH,
+        screenW, screenH);
     Runner_drawViews(runner, gameW, gameH, false);
     renderer->vtable->endFrameInit(renderer);
-    Runner_drawPost(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
+    Runner_drawPost(runner, screenW, screenH);
     renderer->vtable->endFrameEnd(renderer);
-    Runner_drawGUI(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT, gameW, gameH);
+    Runner_drawGUI(runner, screenW, screenH, gameW, gameH);
     renderer->vtable->flush(renderer);
-    C3D_presentBottomSurface(renderer);
+    if (!app->gameOnBottomScreen) C3D_presentBottomSurface(renderer);
     timing->drawEndTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
 }
 
@@ -802,6 +811,7 @@ static void n3ds_appDrawFrameOverlay(
         return;
     }
 #if N3DS_HAS_BOTTOM_TARGET
+    if (app->gameOnBottomScreen) return;
     if (!C3D_bottomScreenUsed(renderer)) {
         if (app->bottomScreenDisabledNeedsClear) {
             C3D_clearBottomScreen(renderer);

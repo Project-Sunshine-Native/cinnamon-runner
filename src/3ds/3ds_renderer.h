@@ -8,6 +8,7 @@
 
 Renderer* C3D_create(
     bool cacheAtlas, uint32_t atlasTextureCacheBytes, bool halfResApplicationSurface);
+void C3D_setGameOnBottomScreen(Renderer* renderer, bool enabled);
 void C3D_beginDrawFrame(Renderer* renderer);
 void C3D_endDrawFrame(Renderer* renderer);
 N3DSC3DVertex* C3D_beginVertices(

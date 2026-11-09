@@ -356,6 +356,7 @@ typedef struct {
     C3D_RenderTarget* topTarget;
     C3D_RenderTarget* bottomTarget;
     bool bottomScreenUsedThisFrame;
+    bool gameOnBottomScreen;
     int32_t currentTargetSurfaceId;
     bool currentHostTargetIsBottomScreen;
     int32_t applicationSurfaceId;
@@ -3853,13 +3854,15 @@ static void C3D_getAppSurfaceSize(
 }
 
 static void C3D_bindTopScreenTarget(N3DSRenderer* renderer) {
-    C3D_bindTarget(renderer, RENDER_TARGET_HOST_FRAMEBUFFER, false);
-    n3ds_c3dUpdateProjection(&renderer->drawContext, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
+    C3D_bindTarget(renderer, RENDER_TARGET_HOST_FRAMEBUFFER, renderer->gameOnBottomScreen);
+    if (renderer->gameOnBottomScreen) renderer->bottomScreenUsedThisFrame = true;
+    n3ds_c3dUpdateProjection(&renderer->drawContext,
+        renderer->gameOnBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
     renderer->screenTransformActive = false;
     renderer->customCameraTransformActive = false;
     renderer->currentLogicalPortX = 0;
     renderer->currentLogicalPortY = 0;
-    renderer->currentLogicalPortW = N3DS_TOP_WIDTH;
+    renderer->currentLogicalPortW = renderer->gameOnBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH;
     renderer->currentLogicalPortH = N3DS_TOP_HEIGHT;
 }
 
@@ -3895,8 +3898,19 @@ static void C3D_blitAppSurface(N3DSRenderer* renderer) {
     float top = 0.0f;
     float right = (float)N3DS_TOP_WIDTH;
     float bottom = (float)N3DS_TOP_HEIGHT;
-    C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH, N3DS_TOP_WIDTH,
-        N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
+    if (renderer->gameOnBottomScreen) {
+        float scale = fmaxf((float)N3DS_BOTTOM_WIDTH / renderer->frameGameW,
+            (float)N3DS_BOTTOM_HEIGHT / renderer->frameGameH);
+        float w = renderer->frameGameW * scale;
+        float h = renderer->frameGameH * scale;
+        left = (N3DS_BOTTOM_WIDTH - w) * 0.5f;
+        top = (N3DS_BOTTOM_HEIGHT - h) * 0.5f;
+        right = left + w;
+        bottom = top + h;
+    } else {
+        C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH, N3DS_TOP_WIDTH,
+            N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
+    }
     float u1 = surface->texWidth > 0 ? (float)surface->width / (float)surface->texWidth : 1.0f;
     float v0 = surface->texHeight > 0
         ? (float)(surface->texHeight - surface->height) / (float)surface->texHeight
@@ -6057,6 +6071,11 @@ void C3D_clearBottomScreen(MAYBE_UNUSED Renderer* renderer) {
     n3ds->bottomScreenUsedThisFrame = true;
     C3D_restoreRenderState(n3ds, &savedState, -1);
 #endif
+}
+
+void C3D_setGameOnBottomScreen(Renderer* renderer, bool enabled) {
+    if (renderer == NULL) return;
+    ((N3DSRenderer*)renderer)->gameOnBottomScreen = enabled;
 }
 
 void C3D_skipTopScreenPresent(Renderer* renderer) {
