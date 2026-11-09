@@ -14,6 +14,8 @@ N3DSC3DVertex* C3D_beginVertices(
     Renderer* renderer, C3D_Tex* texture, uint32_t vertexCount);
 void C3D_commitVertices(Renderer* renderer, uint32_t vertexCount);
 void C3D_getViewRect(const Renderer* renderer, int32_t rect[4]);
+bool C3D_getTileCullRect(const Renderer* renderer, float rect[4]);
+bool C3D_roomTileVisible(const Renderer* renderer, const RoomTile* tile, float offsetX, float offsetY);
 
 typedef struct {
     uint16_t width;
