@@ -2,7 +2,7 @@ name: 3DS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, undertale3DS]
   pull_request:
     branches: [main]
   workflow_dispatch:
