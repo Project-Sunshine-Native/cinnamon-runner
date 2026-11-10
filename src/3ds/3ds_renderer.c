@@ -1098,7 +1098,7 @@ static void C3D_mapPoint(
         mapper->y3, mapper->x4, mapper->y4, u, v, outX, outY);
 }
 
-static void C3D_mapRect(N3DSRenderer* renderer, const N3DSDrawMapper* mapper, float left,
+static void C3D_mapRect(const N3DSRenderer* renderer, const N3DSDrawMapper* mapper, float left,
     float top, float right, float bottom, float* x1, float* y1, float* x2, float* y2, float* x3,
     float* y3, float* x4, float* y4) {
     if (mapper != NULL && mapper->kind == N3DS_MAP_AXIS) {
@@ -1175,10 +1175,10 @@ static bool C3D_quadVisible(const N3DSRenderer* renderer, float x1, float y1,
     float clipRight = 0.0f;
     float clipBottom = 0.0f;
     if (renderer->screenTransformActive) {
-        clipLeft = (float)renderer->base.CPortX;
-        clipTop = (float)renderer->base.CPortY;
-        clipRight = clipLeft + (float)renderer->base.CPortW;
-        clipBottom = clipTop + (float)renderer->base.CPortH;
+        clipLeft = (float)renderer->currentLogicalPortX;
+        clipTop = (float)renderer->currentLogicalPortY;
+        clipRight = clipLeft + (float)renderer->currentLogicalPortW;
+        clipBottom = clipTop + (float)renderer->currentLogicalPortH;
     } else {
         if (fabsf(renderer->currentViewAngle) > 0.0001f) return true;
         clipLeft = (float)renderer->currentViewX;
@@ -1229,8 +1229,39 @@ static bool C3D_axisRectVisible(
 
 bool C3D_getTileCullRect(const Renderer* base, float rect[4]) {
     const N3DSRenderer* renderer = (const N3DSRenderer*)base;
-    if (!renderer->viewCullActive || renderer->screenTransformActive ||
-        renderer->currentViewAngle != 0.0f || renderer->currentViewW <= 0 ||
+    if (!renderer->viewCullActive) return false;
+    if (renderer->screenTransformActive) {
+        const Matrix4f* m = &renderer->screenTransform;
+        double a = m->m[0], b = m->m[4];
+        double c = m->m[1], d = m->m[5];
+        double determinant = a * d - b * c;
+        double determinantScale = fabs(a * d) + fabs(b * c);
+        if (!isfinite(determinant) || fabs(determinant) <= 1e-6 * determinantScale ||
+            determinant == 0.0 || renderer->currentLogicalPortW <= 0 ||
+            renderer->currentLogicalPortH <= 0) return false;
+
+        // Invert only XY: a valid 2D camera may have a singular Z component.
+        for (int i = 0; i < 4; ++i) {
+            double x = (double)renderer->currentLogicalPortX +
+                ((i & 1) ? (double)renderer->currentLogicalPortW + 1.0 : -1.0) - m->m[12];
+            double y = (double)renderer->currentLogicalPortY +
+                ((i & 2) ? (double)renderer->currentLogicalPortH + 1.0 : -1.0) - m->m[13];
+            float worldX = (float)((d * x - b * y) / determinant);
+            float worldY = (float)((a * y - c * x) / determinant);
+            if (!isfinite(worldX) || !isfinite(worldY)) return false;
+            if (i == 0) {
+                rect[0] = rect[2] = worldX;
+                rect[1] = rect[3] = worldY;
+            } else {
+                rect[0] = fminf(rect[0], worldX);
+                rect[1] = fminf(rect[1], worldY);
+                rect[2] = fmaxf(rect[2], worldX);
+                rect[3] = fmaxf(rect[3], worldY);
+            }
+        }
+        return true;
+    }
+    if (renderer->currentViewAngle != 0.0f || renderer->currentViewW <= 0 ||
         renderer->currentViewH <= 0) return false;
 
     rect[0] = (float)renderer->currentViewX;
@@ -1262,7 +1293,7 @@ static void C3D_emitMappedQuad(N3DSRenderer* renderer, C3D_Tex* tex,
     n3ds_c3dQuadGradientUV(&renderer->drawContext, tex, vertices, colors);
 }
 
-static bool C3D_mapVisibleSpriteQuad(N3DSRenderer* renderer, const N3DSDrawMapper* mapper,
+static bool C3D_mapVisibleSpriteQuad(const N3DSRenderer* renderer, const N3DSDrawMapper* mapper,
     float dstLeft, float dstTop, float dstRight, float dstBottom, float* x1, float* y1, float* x2,
     float* y2, float* x3, float* y3, float* x4, float* y4) {
     if (mapper == NULL || x1 == NULL || y1 == NULL || x2 == NULL ||
@@ -1273,7 +1304,7 @@ static bool C3D_mapVisibleSpriteQuad(N3DSRenderer* renderer, const N3DSDrawMappe
     return C3D_quadVisible(renderer, *x1, *y1, *x2, *y2, *x3, *y3, *x4, *y4);
 }
 
-static bool C3D_mappedRectVisible(N3DSRenderer* renderer,
+static bool C3D_mappedRectVisible(const N3DSRenderer* renderer,
     const N3DSDrawMapper* mapper, float dstLeft, float dstTop, float dstRight, float dstBottom) {
     if (mapper == NULL) return false;
     if (!renderer->viewCullActive) return true;
@@ -3063,18 +3094,23 @@ static void C3D_drawTileResolved(
 
 bool C3D_roomTileVisible(const Renderer* base, const RoomTile* tile, float offsetX, float offsetY) {
     const N3DSRenderer* renderer = (const N3DSRenderer*)base;
-    if (!renderer->screenTransformActive) {
-        float x1 = (float)tile->x + offsetX;
-        float y1 = (float)tile->y + offsetY;
-        float x2 = x1 + (float)tile->width * tile->scaleX;
-        float y2 = y1 + (float)tile->height * tile->scaleY;
-        float minX = x1 < x2 ? x1 : x2;
-        float maxX = x1 > x2 ? x1 : x2;
-        float minY = y1 < y2 ? y1 : y2;
-        float maxY = y1 > y2 ? y1 : y2;
-        return C3D_axisRectVisible(renderer, minX, minY, maxX, maxY);
+    if (!renderer->viewCullActive) return true;
+    if (renderer->screenTransformActive) {
+        N3DSDrawMapper mapper;
+        C3D_mapInitAxis(&mapper, (float)tile->x + offsetX, (float)tile->y + offsetY,
+            tile->scaleX, tile->scaleY);
+        return C3D_mappedRectVisible(renderer, &mapper,
+            0.0f, 0.0f, (float)tile->width, (float)tile->height);
     }
-    return true;
+    float x1 = (float)tile->x + offsetX;
+    float y1 = (float)tile->y + offsetY;
+    float x2 = x1 + (float)tile->width * tile->scaleX;
+    float y2 = y1 + (float)tile->height * tile->scaleY;
+    float minX = x1 < x2 ? x1 : x2;
+    float maxX = x1 > x2 ? x1 : x2;
+    float minY = y1 < y2 ? y1 : y2;
+    float maxY = y1 > y2 ? y1 : y2;
+    return C3D_axisRectVisible(renderer, minX, minY, maxX, maxY);
 }
 
 static void C3D_drawTile(Renderer* base, RoomTile* tile, float offsetX, float offsetY) {
@@ -5535,7 +5571,7 @@ static bool C3D_setScreenTransform(N3DSRenderer* renderer,
     renderer->screenTransform = screenTransform;
     renderer->screenTransformActive = true;
     renderer->customCameraTransformActive = true;
-    renderer->viewCullActive = false;
+    renderer->viewCullActive = true;
     return true;
 }
 
@@ -5645,6 +5681,7 @@ static void C3D_applyProjection(
         }
         renderer->screenTransformActive = false;
         renderer->customCameraTransformActive = false;
+        renderer->viewCullActive = false;
         n3ds_c3dSetProjectionMatrix(&renderer->drawContext, &worldToClip);
         return;
     }
@@ -5691,6 +5728,7 @@ static void C3D_setMatrix(Renderer* base, int32_t matrixType, Matrix4f matrix) {
         }
         renderer->screenTransformActive = false;
         renderer->customCameraTransformActive = false;
+        renderer->viewCullActive = false;
         n3ds_c3dSetProjectionMatrix(&renderer->drawContext, &worldToClip);
     } else if (renderer->currentTargetSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER &&
         renderer->customCameraTransformActive) {
