@@ -48,10 +48,8 @@ static void n3ds_c3dBindState(N3DSC3DDrawContext* ctx) {
     C3D_AlphaTest(ctx->alphaTestEnabled, ctx->alphaTestFunc, ctx->alphaTestRef);
     C3D_StencilTest(false, GPU_ALWAYS, 0, 0xFF, 0xFF);
     C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
-    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
+    C3D_DepthTest(false, GPU_ALWAYS, (GPU_WRITEMASK)ctx->colorMask);
     C3D_CullFace(GPU_CULL_NONE);
-    C3D_FrameBuf* frameBuf = C3D_GetFrameBuf();
-    if (frameBuf != NULL) frameBuf->colorMask = ctx->colorMask;
     ctx->stateDirty = false;
 }
 
