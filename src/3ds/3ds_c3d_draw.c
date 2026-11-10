@@ -356,6 +356,13 @@ void n3ds_c3dFlush(N3DSC3DDrawContext* ctx) {
     if (ctx == NULL || ctx->vertexCount == 0) return;
     if (ctx->currentTexture == NULL) ctx->currentTexture = &ctx->whiteTex;
     uint32_t drawVertexCount = ctx->vertexCount;
+    uint32_t commandSize, commandOffset;
+    GPUCMD_GetBuffer(NULL, &commandSize, &commandOffset);
+    if (ctx->finishDraws != NULL && commandSize - commandOffset < 0x1000u) {
+        ctx->vertexCount = 0;
+        ctx->finishDraws(ctx->finishDrawsUser);
+        ctx->vertexCount = drawVertexCount;
+    }
     uint32_t firstVertex = ctx->streamVertexOffset;
     bool needStateUpload = ctx->stateDirty;
     bool needProjectionUpload = needStateUpload || ctx->projectionDirty;
