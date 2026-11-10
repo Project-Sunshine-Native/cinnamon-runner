@@ -4058,8 +4058,10 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
 
 static int32_t C3D_createSurfaceStorage(
     Renderer* base, int32_t width, int32_t height, bool renderTarget) {
-    return C3D_createSurfaceStorageEx(
-        base, width, height, width, height, renderTarget, N3DS_USER_SURFACE_FORMAT, true, true);
+    int32_t physicalW = width > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : width;
+    int32_t physicalH = height > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : height;
+    return C3D_createSurfaceStorageEx(base, physicalW, physicalH, width, height,
+        renderTarget, N3DS_USER_SURFACE_FORMAT, true, true);
 }
 
 static int32_t C3D_createAppSurface(
@@ -4380,6 +4382,7 @@ static int32_t C3D_snapshotSurface(Renderer* base, int32_t sourceID) {
     n3ds_c3dSetSurfaceProj(
         &renderer->drawContext, (float)source->width, (float)source->height);
     renderer->screenTransformActive = false;
+    C3D_safeFrameSplit(renderer);
     C3D_RenderTargetClear(renderer->surfaces[renderer->hostCaptureSurfaceId].target, C3D_CLEAR_ALL,
         C3D_makeTextureClearColor(
             0x000000u, 0.0f, renderer->surfaces[renderer->hostCaptureSurfaceId].texFormat),
@@ -4435,9 +4438,11 @@ static bool C3D_copySurfaceRect(Renderer* base, int32_t sourceID, int32_t destID
     float dstBottom = (destY + destH) * destScaleY;
     bool fullOverwrite = dstLeft <= 0.0f && dstTop <= 0.0f && dstRight >= (float)dest->width &&
         dstBottom >= (float)dest->height;
-    if (!fullOverwrite)
+    if (!fullOverwrite) {
+        C3D_safeFrameSplit(renderer);
         C3D_RenderTargetClear(dest->target, C3D_CLEAR_ALL,
             C3D_makeTextureClearColor(0x000000u, 0.0f, dest->texFormat), 0);
+    }
     if (copyW > 0 && copyH > 0) {
         N3DSUVRect region;
         Matrix4f transform;
@@ -5361,7 +5366,7 @@ static bool C3D_shadersSupported(void) {
 static void C3D_clearActive(Renderer* base, uint32_t color, float alpha) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
-    n3ds_c3dFlush(&renderer->drawContext);
+    C3D_safeFrameSplit(renderer);
     if (renderer->currentTargetSurfaceId >= 0 &&
         (uint32_t)renderer->currentTargetSurfaceId < renderer->surfaceCount &&
         renderer->surfaces[renderer->currentTargetSurfaceId].target != NULL) {
@@ -6006,9 +6011,11 @@ static void C3D_beginBottomGUIImpl(
     if (!C3D_ensureBottomTarget(n3ds)) return;
     n3ds->bottomScreenUsedThisFrame = true;
     C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, true);
-    if (clear)
+    if (clear) {
+        C3D_safeFrameSplit(n3ds);
         C3D_RenderTargetClear(
             n3ds->bottomTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
+    }
     n3ds->base.CPortX = 0;
     n3ds->base.CPortY = 0;
     n3ds->base.CPortW = N3DS_BOTTOM_WIDTH;
@@ -6087,6 +6094,7 @@ void C3D_clearBottomScreen(MAYBE_UNUSED Renderer* renderer) {
     C3D_saveRenderState(n3ds, &savedState);
     n3ds_c3dFlush(&n3ds->drawContext);
     C3D_bindTarget(n3ds, RENDER_TARGET_HOST_FRAMEBUFFER, true);
+    C3D_safeFrameSplit(n3ds);
     C3D_RenderTargetClear(n3ds->bottomTarget, C3D_CLEAR_ALL, n3ds_c3dClearColor(0, 0, 0, 0), 0);
     n3ds->bottomScreenUsedThisFrame = true;
     C3D_restoreRenderState(n3ds, &savedState, -1);
