@@ -4058,8 +4058,16 @@ static int32_t C3D_createSurfaceStorage(
     Renderer* base, int32_t width, int32_t height, bool renderTarget) {
     int32_t physicalW = width > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : width;
     int32_t physicalH = height > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : height;
-    return C3D_createSurfaceStorageEx(base, physicalW, physicalH, width, height,
-        renderTarget, N3DS_USER_SURFACE_FORMAT, true, true);
+    for (;;) {
+        int32_t surfaceID = C3D_createSurfaceStorageEx(base, physicalW, physicalH, width, height,
+            renderTarget, N3DS_USER_SURFACE_FORMAT, true, true);
+        if (surfaceID >= 0 || !renderTarget || physicalW <= 0 || physicalH <= 0 ||
+            (physicalW <= 8 && physicalH <= 8))
+            return surfaceID;
+
+        physicalW = (physicalW + 1) / 2;
+        physicalH = (physicalH + 1) / 2;
+    }
 }
 
 static int32_t C3D_createAppSurface(
@@ -4795,12 +4803,13 @@ static void C3D_surfaceCopy(Renderer* base, int32_t destSurfaceID, int32_t destX
         return;
     N3DSRenderStateSnapshot savedState;
     C3D_saveRenderState(renderer, &savedState);
+    C3D_beginSurfaceCopyState(renderer);
     C3D_setTargetProjection(base, destSurfaceID);
     if (part)
         base->vtable->drawSurface(base, srcSurfaceID, srcX, srcY, srcW, srcH, (float)destX,
             (float)destY, 1.0f, 1.0f, 0.0f, 0xFFFFFFu, 1.0f);
     else
-        base->vtable->drawSurface(base, srcSurfaceID, 0, 0, srcW, srcH, (float)destX, (float)destY,
+        base->vtable->drawSurface(base, srcSurfaceID, 0, 0, -1, -1, (float)destX, (float)destY,
             1.0f, 1.0f, 0.0f, 0xFFFFFFu, 1.0f);
     n3ds_c3dFlush(&renderer->drawContext);
     C3D_restoreRenderState(renderer, &savedState, destSurfaceID);
