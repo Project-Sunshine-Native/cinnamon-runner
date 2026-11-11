@@ -3402,7 +3402,6 @@ static void C3D_drawTriangle(Renderer* base, float x1, float y1, float x2, float
     float x3, float y3, uint32_t c1, uint32_t c2, uint32_t c3, float alpha, bool outline) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
-    if (alpha <= 0.0f) return;
     if (outline) {
         base->vtable->drawLineColor(base, x1, y1, x2, y2, 1.0f, c1, c2, alpha);
         base->vtable->drawLineColor(base, x2, y2, x3, y3, 1.0f, c2, c3, alpha);
@@ -3517,7 +3516,6 @@ static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, floa
     float width, uint32_t color1, uint32_t color2, float alpha) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
-    if (alpha <= 0.0f) return;
     bool hostViewProjectionActive = renderer->hostViewProjectionActive;
     bool renderSpace = renderer->screenTransformActive || hostViewProjectionActive;
     float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
