@@ -20656,6 +20656,9 @@ static void particleTypeSetDefaults(ParticleType* type) {
 // Returns false once the system is full, so the callers' loops can stop instead of spinning through a
 // spawn count that came straight from GML and may be enormous.
 static bool particleSpawnAt(Runner* runner, ParticleSystem* system, int32_t typeId, GMLReal x, GMLReal y, uint32_t colour, bool fixedColour) {
+#ifdef PLATFORM_3DS
+    return false;
+#endif
     ParticleType* type = particleTypeGet(runner, typeId);
     if (type == nullptr) return false;
 
@@ -20760,6 +20763,9 @@ typedef struct { int32_t typeId; GMLReal x, y; int32_t count; } PendingSpawn;
 // then do the emitters stream. That order is GameMaker's, and it is why a streamed particle stands
 // still on the step it is born.
 static void particleUpdateSystem(Runner* runner, int32_t systemId) {
+#ifdef PLATFORM_3DS
+    return;
+#endif
     ParticleSystem* system = Particles_systemGet(runner, systemId);
     if (system == nullptr) return;
 
@@ -20909,6 +20915,9 @@ static uint32_t particleColourAt(const ParticleType* type, GMLReal ageFraction) 
 
 // Not static: backs both part_system_drawit and the system's entry in the depth-sorted draw list.
 void Particles_drawSystem(Runner* runner, int32_t systemId) {
+#ifdef PLATFORM_3DS
+    return;
+#endif
     ParticleSystem* system = Particles_systemGet(runner, systemId);
     if (system == nullptr || runner->renderer == nullptr) return;
 
