@@ -56,6 +56,7 @@ typedef struct {
     C3D_Tex* boundTexture;
     C3D_Tex boundTextureState;
     bool blendEnabled;
+    bool premultiplyAlpha;
     GPU_BLENDEQUATION blendColorEq;
     GPU_BLENDEQUATION blendAlphaEq;
     GPU_BLENDFACTOR blendSrcColor;
@@ -89,6 +90,7 @@ void n3ds_c3dSetBlend(N3DSC3DDrawContext* ctx, bool enabled, GPU_BLENDEQUATION c
     GPU_BLENDEQUATION alphaEq, GPU_BLENDFACTOR srcColor, GPU_BLENDFACTOR dstColor,
     GPU_BLENDFACTOR srcAlpha, GPU_BLENDFACTOR dstAlpha);
 void n3ds_c3dSetAlphaTest(N3DSC3DDrawContext* ctx, bool enabled, GPU_TESTFUNC func, int ref);
+void n3ds_c3dSetPremultiplyAlpha(N3DSC3DDrawContext* ctx, bool enabled);
 void n3ds_c3dSetTexFilter(N3DSC3DDrawContext* ctx, bool linear);
 void n3ds_c3dSetColorMask(N3DSC3DDrawContext* ctx, bool red, bool green, bool blue, bool alpha);
 void n3ds_c3dFlush(N3DSC3DDrawContext* ctx);

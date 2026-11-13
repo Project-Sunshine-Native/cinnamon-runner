@@ -9,6 +9,7 @@
 #include "../text_utils.h"
 #include "../utils.h"
 #include <assert.h>
+#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -328,6 +329,7 @@ typedef struct {
 
 typedef struct {
     bool blendEnabled;
+    bool premultiplyAlpha;
     int32_t blendSrc;
     int32_t blendDst;
     int32_t blendSrcAlpha;
@@ -346,6 +348,7 @@ typedef struct N3DSRenderStateSnapshot N3DSRenderStateSnapshot;
 typedef struct {
     Renderer base;
     N3DSC3DDrawContext drawContext;
+    bool* premultiplyAlphaShaders;
     N3DSViewportCache viewportCache;
     bool drawContextReady;
     bool ready;
@@ -601,6 +604,7 @@ static void C3D_saveRenderState(N3DSRenderer* renderer, N3DSRenderStateSnapshot*
 
 static void C3D_beginSurfaceCopyState(N3DSRenderer* renderer) {
     renderer->renderState.blendEnabled = false;
+    renderer->renderState.premultiplyAlpha = false;
     renderer->renderState.alphaTestEnabled = false;
     renderer->renderState.colorWriteR = true;
     renderer->renderState.colorWriteG = true;
@@ -2376,6 +2380,7 @@ static void C3D_getHostGuiViewport(int32_t guiW, int32_t guiH, int32_t portX,
 
 static void C3D_applyBlendState(N3DSRenderer* renderer) {
     N3DSRenderState* state = &renderer->renderState;
+    n3ds_c3dSetPremultiplyAlpha(&renderer->drawContext, state->premultiplyAlpha);
     GPU_BLENDFACTOR srcColor =
         state->blendEnabled ? C3D_blendFactorFromGml(state->blendSrc) : GPU_ONE;
     GPU_BLENDFACTOR dstColor =
@@ -3871,14 +3876,14 @@ static bool C3D_getSnapshotRect(N3DSRenderer* renderer,
     return true;
 }
 
-static bool C3D_appSurfaceTooLarge(int32_t width, int32_t height) {
-    return width > N3DS_MAX_APPLICATION_SURFACE_WIDTH ||
-        height > N3DS_MAX_APPLICATION_SURFACE_HEIGHT;
-}
-
 static void C3D_getAppSurfaceSize(
     N3DSRenderer* renderer, int32_t logicalW, int32_t logicalH, int32_t* outW, int32_t* outH) {
     if (renderer->halfResApplicationSurface) {
+        logicalW = (logicalW + 1) / 2;
+        logicalH = (logicalH + 1) / 2;
+    }
+    while (logicalW > N3DS_MAX_APPLICATION_SURFACE_WIDTH ||
+        logicalH > N3DS_MAX_APPLICATION_SURFACE_HEIGHT) {
         logicalW = (logicalW + 1) / 2;
         logicalH = (logicalH + 1) / 2;
     }
@@ -4564,22 +4569,6 @@ static int32_t C3D_ensureAppSurface(
         if (renderer->applicationSurfaceId >= 0) {
             C3D_destroySurfaceSlot(renderer, renderer->applicationSurfaceId);
             renderer->applicationSurfaceId = APPLICATION_SURFACE_ID;
-        }
-        return APPLICATION_SURFACE_ID;
-    }
-
-    if (C3D_appSurfaceTooLarge(width, height)) {
-        if (renderer->applicationSurfaceId >= 0) {
-            C3D_destroySurfaceSlot(renderer, renderer->applicationSurfaceId);
-        }
-        renderer->applicationSurfaceId = APPLICATION_SURFACE_ID;
-        if (renderer->failedApplicationSurfaceW != width ||
-            renderer->failedApplicationSurfaceH != height) {
-            renderer->failedApplicationSurfaceW = width;
-            renderer->failedApplicationSurfaceH = height;
-            logEvent("renderer", "app surface unavailable logical=%ldx%ld max=%dx%d", (long)width,
-                (long)height, N3DS_MAX_APPLICATION_SURFACE_WIDTH,
-                N3DS_MAX_APPLICATION_SURFACE_HEIGHT);
         }
         return APPLICATION_SURFACE_ID;
     }
@@ -5283,12 +5272,17 @@ static void C3D_gpuSetFog(
     assert(base != NULL);
 }
 
-static void C3D_gpuSetShader(
-    MAYBE_UNUSED Renderer* base, MAYBE_UNUSED int32_t shaderIndex) {
+static void C3D_gpuSetShader(Renderer* base, int32_t shaderIndex) {
     assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    base->currentShader = shaderIndex;
+    renderer->renderState.premultiplyAlpha = shaderIndex >= 0 &&
+        (uint32_t)shaderIndex < base->dataWin->shdr.count &&
+        renderer->premultiplyAlphaShaders[shaderIndex];
+    C3D_applyBlendState(renderer);
 }
-static void C3D_gpuResetShader(MAYBE_UNUSED Renderer* base) {
-    assert(base != NULL);
+static void C3D_gpuResetShader(Renderer* base) {
+    C3D_gpuSetShader(base, -1);
 }
 
 static int32_t C3D_shaderGetUniform(
@@ -5361,9 +5355,11 @@ static void C3D_textureSetStage(
 }
 
 static bool C3D_shaderIsCompiled(
-    MAYBE_UNUSED Renderer* base, MAYBE_UNUSED int32_t shader) {
+    Renderer* base, int32_t shader) {
     assert(base != NULL);
-    return false;
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    return shader >= 0 && (uint32_t)shader < base->dataWin->shdr.count &&
+        renderer->premultiplyAlphaShaders[shader];
 }
 
 static bool C3D_shadersSupported(void) {
@@ -5391,10 +5387,33 @@ static void C3D_clearActive(Renderer* base, uint32_t color, float alpha) {
     }
 }
 
+static bool C3D_isPremultiplyAlphaShader(const Shader* shader) {
+    const char* source = shader->glslES_Fragment != NULL
+        ? shader->glslES_Fragment : shader->glsl_Fragment;
+    if (!shader->present || source == NULL) return false;
+    const char* body = strstr(source, "void main");
+    if (body == NULL) return false;
+    const char* expected =
+        "voidmain(){vec4col=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);"
+        "gl_FragColor=vec4(col.rgb*col.a,col.a);}";
+    while (*expected != '\0') {
+        while (isspace((unsigned char)*body)) body++;
+        if (*body++ != *expected++) return false;
+    }
+    while (isspace((unsigned char)*body)) body++;
+    return *body == '\0';
+}
+
 static void C3D_init(Renderer* base, DataWin* dataWin) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     base->dataWin = dataWin;
+    if (dataWin->shdr.count > 0) {
+        renderer->premultiplyAlphaShaders = safeCalloc(dataWin->shdr.count, sizeof(bool));
+        for (uint32_t i = 0; i < dataWin->shdr.count; ++i)
+            renderer->premultiplyAlphaShaders[i] =
+                C3D_isPremultiplyAlphaShader(&dataWin->shdr.shaders[i]);
+    }
     if (!n3ds_c3dInit(&renderer->drawContext, N3DS_C3D_MAX_QUADS)) {
         C3D_setError(renderer, "Failed to initialize 3DS draw context");
         return;
@@ -5456,6 +5475,7 @@ static void C3D_destroy(Renderer* base) {
         C3D_TexDelete(&renderer->surfaces[i].tex);
     }
     free(renderer->surfaces);
+    free(renderer->premultiplyAlphaShaders);
     arrfree(renderer->freeRuntimeTpagIndices);
     arrfree(renderer->freeSurfaceSpriteSurfaces);
     arrfree(renderer->pendingSurfaceFrees);

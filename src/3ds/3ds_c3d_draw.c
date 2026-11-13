@@ -39,6 +39,13 @@ static void n3ds_c3dBindState(N3DSC3DDrawContext* ctx) {
     C3D_TexEnvInit(env);
     C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, 0);
     C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+    env = C3D_GetTexEnv(1);
+    C3D_TexEnvInit(env);
+    if (ctx->premultiplyAlpha) {
+        C3D_TexEnvSrc(env, C3D_Both, GPU_PREVIOUS, GPU_PREVIOUS, 0);
+        C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_COLOR, GPU_TEVOP_RGB_SRC_ALPHA, 0);
+        C3D_TexEnvFunc(env, C3D_RGB, GPU_MODULATE);
+    }
     if (ctx->blendEnabled) {
         C3D_AlphaBlend(ctx->blendColorEq, ctx->blendAlphaEq, ctx->blendSrcColor, ctx->blendDstColor,
             ctx->blendSrcAlpha, ctx->blendDstAlpha);
@@ -320,6 +327,13 @@ void n3ds_c3dSetBlend(N3DSC3DDrawContext* ctx, bool enabled, GPU_BLENDEQUATION c
     ctx->blendDstColor = dstColor;
     ctx->blendSrcAlpha = srcAlpha;
     ctx->blendDstAlpha = dstAlpha;
+    ctx->stateDirty = true;
+}
+
+void n3ds_c3dSetPremultiplyAlpha(N3DSC3DDrawContext* ctx, bool enabled) {
+    if (ctx == NULL || ctx->premultiplyAlpha == enabled) return;
+    n3ds_c3dFlush(ctx);
+    ctx->premultiplyAlpha = enabled;
     ctx->stateDirty = true;
 }
 
