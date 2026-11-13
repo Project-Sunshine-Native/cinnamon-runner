@@ -11172,14 +11172,14 @@ static RValue builtin_buffer_read(MAYBE_UNUSED VMContext* ctx, RValue* args, MAY
         case GML_BUFTYPE_U32: {
             if (buf->position + 4 <= buf->size) {
                 uint32_t val = BinaryUtils_readUint32(buf->data + buf->position);
-                result = RValue_makeReal((GMLReal) val);
+                result = val <= INT32_MAX ? RValue_makeInt32((int32_t) val) : RValue_makeInt64(val);
             }
             buf->position += 4;
             break;
         }
         case GML_BUFTYPE_S32: {
             if (buf->position + 4 <= buf->size) {
-                result = RValue_makeReal((GMLReal) BinaryUtils_readInt32(buf->data + buf->position));
+                result = RValue_makeInt32(BinaryUtils_readInt32(buf->data + buf->position));
             }
             buf->position += 4;
             break;
@@ -13846,8 +13846,13 @@ static RValue builtin_color_get_value(MAYBE_UNUSED VMContext* ctx, RValue* args,
 }
 
 // Display stubs
+#ifdef PLATFORM_3DS
+STUB_RETURN_VALUE(display_get_width, 400.0)
+STUB_RETURN_VALUE(display_get_height, 240.0)
+#else
 STUB_RETURN_VALUE(display_get_width, 640.0)
 STUB_RETURN_VALUE(display_get_height, 480.0)
+#endif
 
 static int32_t resolveGuiWidth(Runner* runner) {
     if (runner->guiWidth > 0) return runner->guiWidth;
@@ -25137,10 +25142,10 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     }
 
     // Window
-    VM_registerBuiltin(ctx, "window_get_fullscreen", builtin_window_get_fullscreen);
-    VM_registerBuiltin(ctx, "window_set_fullscreen", builtin_window_set_fullscreen);
     VM_registerBuiltin(ctx, "window_set_caption", builtin_window_set_caption);
     VM_registerBuiltin(ctx, "window_get_caption", builtin_window_get_caption);
+    VM_registerBuiltin(ctx, "window_get_fullscreen", builtin_window_get_fullscreen);
+    VM_registerBuiltin(ctx, "window_set_fullscreen", builtin_window_set_fullscreen);
     VM_registerBuiltin(ctx, "window_get_width", builtin_window_get_width);
     VM_registerBuiltin(ctx, "window_get_height", builtin_window_get_height);
     VM_registerBuiltin(ctx, "window_get_x", builtin_window_get_x);
