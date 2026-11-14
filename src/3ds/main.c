@@ -1,5 +1,4 @@
 #include "../data_win.h"
-#include "../json_reader.h"
 #include "../runner.h"
 #include "../runner_gamepad.h"
 #include "../runner_keyboard.h"
@@ -14,10 +13,12 @@
 #include "3ds_log.h"
 #include "3ds_platform_config.h"
 #include "3ds_renderer.h"
+#include "3ds_settings.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <citro3d.h>
 #include <dirent.h>
+#include <math.h>
 #include <stb/ds/stb_ds.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,132 +27,22 @@
 #define N3DS_ENABLE_TOUCH_MOUSE 1
 #define N3DS_ATLAS_MAGIC 0x5441334Eu
 #define N3DS_ATLAS_VERSION 2u
-#define N3DS_KEY_MAPPING_COUNT 21
 #define N3DS_TOP_SCREEN_WIDTH 400
 #define N3DS_TOP_SCREEN_HEIGHT 240
 #define N3DS_BOTTOM_SCREEN_WIDTH 320
 #define N3DS_BOTTOM_SCREEN_HEIGHT 240
-#define N3DS_ATLAS_TEXTURE_CACHE_SIZE_MAX_MB 60
 #define N3DS_SDMC_ROOT "sdmc:/3ds/cinnamon"
-#define N3DS_SETTINGS_PATH N3DS_SDMC_ROOT "/cinnamon_settings.json"
 #define N3DS_ROMFS_DATA_WIN_PATH "romfs:/data.win"
 
-typedef struct {
-    bool debugLogEnabled;
-    bool debugStatsEnabled;
-    bool gamepadApiEnabled;
-    bool cacheAtlas;
-    bool halfResApplicationSurface;
-    YoYoOperatingSystem osType;
-    uint32_t atlasTextureCacheBytes;
-    int32_t keyMappings[N3DS_KEY_MAPPING_COUNT];
-} N3DSRunnerSettings;
-
-typedef struct {
-    const char* jsonKey;
-    uint32_t button;
-} N3DSKeyBinding;
-
-static const N3DSKeyBinding N3DS_KEY_BINDINGS[N3DS_KEY_MAPPING_COUNT] = {
-    {"dpadLeft", KEY_DLEFT},
-    {"dpadDown", KEY_DDOWN},
-    {"dpadRight", KEY_DRIGHT},
-    {"dpadUp", KEY_DUP},
-    {"circleLeft", KEY_CPAD_LEFT},
-    {"circleDown", KEY_CPAD_DOWN},
-    {"circleUp", KEY_CPAD_UP},
-    {"circleRight", KEY_CPAD_RIGHT},
-    {"a", KEY_A},
-    {"b", KEY_B},
-    {"x", KEY_X},
-    {"y", KEY_Y},
-    {"start", KEY_START},
-    {"l", KEY_L},
-    {"r", KEY_R},
-    {"cstickLeft", KEY_CSTICK_LEFT},
-    {"cstickDown", KEY_CSTICK_DOWN},
-    {"cstickUp", KEY_CSTICK_UP},
-    {"cstickRight", KEY_CSTICK_RIGHT},
-    {"zl", KEY_ZL},
-    {"zr", KEY_ZR},
-};
+static int32_t gN3DSGameScreenWidth = N3DS_TOP_SCREEN_WIDTH;
 
 static bool n3ds_appGetWindowSize(int32_t* outW, int32_t* outH) {
-    if (outW != NULL) *outW = N3DS_TOP_SCREEN_WIDTH;
+    if (outW != NULL) *outW = gN3DSGameScreenWidth;
     if (outH != NULL) *outH = N3DS_TOP_SCREEN_HEIGHT;
     return true;
 }
 
 static void n3ds_appSetWindowSize(MAYBE_UNUSED int32_t width, MAYBE_UNUSED int32_t height) {}
-
-static bool n3ds_appJsonBool(const JsonValue* object, const char* key, bool defaultValue) {
-    if (!JsonReader_isObject(object)) return defaultValue;
-    JsonValue* value = JsonReader_getJsonValueByKey(object, key);
-    return JsonReader_isBool(value) ? JsonReader_getBool(value) : defaultValue;
-}
-
-static int32_t n3ds_appJsonInt(const JsonValue* object, const char* key, int32_t defaultValue) {
-    if (!JsonReader_isObject(object)) return defaultValue;
-    JsonValue* value = JsonReader_getJsonValueByKey(object, key);
-    return JsonReader_isNumber(value) ? (int32_t)JsonReader_getInt(value) : defaultValue;
-}
-
-static N3DSRunnerSettings n3ds_settingsLoad(const char* path) {
-    N3DSRunnerSettings settings = {
-        .debugLogEnabled = true,
-        .debugStatsEnabled = false,
-        .gamepadApiEnabled = true,
-        .cacheAtlas = true,
-        .halfResApplicationSurface = false,
-        .osType = OS_WINDOWS,
-        .atlasTextureCacheBytes = 0u,
-    };
-    for (uint32_t i = 0u; i < N3DS_KEY_MAPPING_COUNT; ++i) {
-        settings.keyMappings[i] = -1;
-    }
-
-    JsonValue* root = NULL;
-    FILE* file = fopen(path != NULL ? path : N3DS_SETTINGS_PATH, "rb");
-    if (file != NULL) {
-        fseek(file, 0, SEEK_END);
-        long size = ftell(file);
-        rewind(file);
-        if (size >= 0) {
-            char* text = safeMalloc((size_t)size + 1u);
-            size_t bytesRead = fread(text, 1u, (size_t)size, file);
-            text[bytesRead] = '\0';
-            root = JsonReader_parse(text);
-            free(text);
-        }
-        fclose(file);
-    }
-    if (!JsonReader_isObject(root)) {
-        JsonReader_free(root);
-        return settings;
-    }
-
-    JsonValue* runner = JsonReader_getJsonValueByKey(root, "runner");
-    settings.debugLogEnabled = n3ds_appJsonBool(runner, "debugLog", true);
-    settings.debugStatsEnabled = n3ds_appJsonBool(runner, "debugStats", false);
-    settings.gamepadApiEnabled = n3ds_appJsonBool(runner, "gamepadApi", true);
-    settings.cacheAtlas = n3ds_appJsonBool(runner, "cacheAtlas", true);
-    settings.osType = (YoYoOperatingSystem)n3ds_appJsonInt(runner, "osType", settings.osType);
-    settings.halfResApplicationSurface =
-        n3ds_appJsonBool(runner, "halfResolutionApplicationSurface", false);
-    int32_t cacheMb = n3ds_appJsonInt(runner, "atlasTextureCacheMb", 0);
-    if (cacheMb < 0) cacheMb = 0;
-    if (cacheMb > N3DS_ATLAS_TEXTURE_CACHE_SIZE_MAX_MB) {
-        cacheMb = N3DS_ATLAS_TEXTURE_CACHE_SIZE_MAX_MB;
-    }
-    settings.atlasTextureCacheBytes = (uint32_t)cacheMb * 1024u * 1024u;
-
-    JsonValue* keyboard = JsonReader_getJsonValueByKey(root, "keyboard");
-    for (uint32_t i = 0u; i < N3DS_KEY_MAPPING_COUNT; ++i) {
-        settings.keyMappings[i] = n3ds_appJsonInt(keyboard, N3DS_KEY_BINDINGS[i].jsonKey, -1);
-    }
-    JsonReader_free(root);
-    return settings;
-}
 
 static void n3ds_appSyncKey(RunnerKeyboardState* keyboard, bool* held, int32_t key, bool down) {
     if (keyboard == NULL || held == NULL || key < 0 || key >= GML_KEY_COUNT) return;
@@ -208,10 +99,18 @@ static int n3ds_compareGamePaths(const void* left, const void* right) {
 static char* n3ds_chooseDataWinPath(bool citroReady, bool* cancelled) {
     *cancelled = false;
 #ifdef N3DS_USE_ROMFS
-    (void)citroReady;
     if (n3ds_fsPathExists(N3DS_ROMFS_DATA_WIN_PATH)) {
         snprintf(
             gN3DSDataWinStatusLine, sizeof(gN3DSDataWinStatusLine), "Using data.win from RomFS");
+        N3DSLoadingScreen selector = {0};
+        n3ds_loadInit(&selector, citroReady);
+        char* gamePaths[] = {N3DS_ROMFS_DATA_WIN_PATH};
+        int selected = n3ds_loadSelectGame(&selector, gamePaths, 1);
+        n3ds_loadFree(&selector);
+        if (selected < 0) {
+            *cancelled = true;
+            return NULL;
+        }
         return safeStrdup(N3DS_ROMFS_DATA_WIN_PATH);
     }
     snprintf(gN3DSDataWinStatusLine, sizeof(gN3DSDataWinStatusLine), "No data.win found in RomFS");
@@ -247,7 +146,7 @@ static char* n3ds_chooseDataWinPath(bool citroReady, bool* cancelled) {
 
     closedir(dir);
     int selected = 0;
-    if (arrlen(gamePaths) > 1) {
+    if (arrlen(gamePaths) > 0) {
         qsort(gamePaths, arrlen(gamePaths), sizeof(*gamePaths), n3ds_compareGamePaths);
         N3DSLoadingScreen selector = {0};
         n3ds_loadInit(&selector, citroReady);
@@ -305,7 +204,8 @@ static void n3ds_appSetMousePos(
 #endif
 
 static void n3ds_appSyncTouchMouse(
-    N3DSTouchMouseState* state, Runner* runner, int32_t gameW, int32_t gameH, u32 held) {
+    N3DSTouchMouseState* state, Runner* runner, int32_t gameW, int32_t gameH, u32 held,
+    const N3DSRunnerSettings* settings) {
     if (state == NULL || runner == NULL || runner->mouse == NULL) return;
     if (gameW <= 0) gameW = 1;
     if (gameH <= 0) gameH = 1;
@@ -329,16 +229,20 @@ static void n3ds_appSyncTouchMouse(
     state->cursorX = n3ds_appClampDouble(state->cursorX, 0.0, (double)gameW - 1.0);
     state->cursorY = n3ds_appClampDouble(state->cursorY, 0.0, (double)gameH - 1.0);
 
-    bool touchHeld = (held & KEY_TOUCH) != 0;
+    bool touchHeld = settings->touchMouse && (held & KEY_TOUCH) != 0;
     touchPosition touch;
     memset(&touch, 0, sizeof(touch));
     if (touchHeld) hidTouchRead(&touch);
 
     if (touchHeld) {
-        state->cursorX =
-            ((double)touch.px + 0.5) * (double)gameW / (double)N3DS_BOTTOM_SCREEN_WIDTH;
-        state->cursorY =
-            ((double)touch.py + 0.5) * (double)gameH / (double)N3DS_BOTTOM_SCREEN_HEIGHT;
+        double width = settings->bottomScreen ? N3DS_BOTTOM_SCREEN_WIDTH : N3DS_TOP_SCREEN_WIDTH;
+        double scaleX = width / gameW;
+        double scaleY = (double)N3DS_TOP_SCREEN_HEIGHT / gameH;
+        if (settings->scaling != N3DS_SCALING_STRETCH) scaleX = scaleY = fmin(scaleX, scaleY);
+        double left = (width - gameW * scaleX) * 0.5;
+        double top = (N3DS_TOP_SCREEN_HEIGHT - gameH * scaleY) * 0.5;
+        state->cursorX = (((touch.px + 0.5) * width / N3DS_BOTTOM_SCREEN_WIDTH) - left) / scaleX;
+        state->cursorY = (touch.py + 0.5 - top) / scaleY;
         state->cursorX = n3ds_appClampDouble(state->cursorX, 0.0, (double)gameW - 1.0);
         state->cursorY = n3ds_appClampDouble(state->cursorY, 0.0, (double)gameH - 1.0);
         if (!state->touchHeld) RunnerMouse_onButtonDown(runner->mouse, GML_MB_LEFT);
@@ -539,6 +443,8 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     session->audioSystem = (AudioSystem*)n3ds_audioCreate();
 
     session->audioSystem->vtable->init(session->audioSystem, session->dataWin, session->fileSystem);
+    n3ds_audioSetOutputGain((N3DSAudioSystem*)session->audioSystem,
+        settings->mute ? 0.0f : (float)settings->volume / 100.0f);
     if (!n3ds_audioIsReady((N3DSAudioSystem*)session->audioSystem)) {
         const char* error =
             n3ds_audioGetStartupError((N3DSAudioSystem*)session->audioSystem);
@@ -553,13 +459,12 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     session->vm = VM_create(session->dataWin);
 
     n3ds_loadSet(&loadingScreen, "Creating renderer...", 1, 1);
-    session->renderer = C3D_create(settings == NULL || settings->cacheAtlas,
-        settings != NULL ? settings->atlasTextureCacheBytes : 0u,
-        settings != NULL && settings->halfResApplicationSurface);
+    session->renderer = C3D_create(settings);
     n3ds_loadSet(&loadingScreen, "Creating runner...", 1, 1);
     session->runner = Runner_create(session->dataWin, session->vm, session->renderer,
         session->fileSystem, session->audioSystem, 0);
     if (gameArgs != NULL) Runner_setGameArgs(session->runner, gameArgs, (int32_t)arrlen(gameArgs));
+    gN3DSGameScreenWidth = settings->bottomScreen ? N3DS_BOTTOM_SCREEN_WIDTH : N3DS_TOP_SCREEN_WIDTH;
     session->runner->getWindowSize = n3ds_appGetWindowSize;
     session->runner->setWindowSize = n3ds_appSetWindowSize;
     session->runner->osType = settings != NULL ? settings->osType : OS_WINDOWS;
@@ -630,12 +535,55 @@ typedef struct {
     bool keyboardHeld[GML_KEY_COUNT];
     bool citroReady;
     bool debugMonitorVisible;
+    bool returnToLauncher;
 #if N3DS_HAS_BOTTOM_TARGET
     bool bottomScreenDisabledNeedsClear;
 #endif
     float frameRate;
     u64 lastFrameStartTick;
+    char playtimePath[1100];
+    u64 playtimeTicks;
+    u64 playtimeStartTick;
+    unsigned playtimePaused;
+    bool playing;
+    aptHookCookie playtimeHook;
 } N3DSApplication;
+
+static void n3ds_appPausePlaytime(N3DSApplication* app) {
+    if (app->playtimeStartTick == 0) return;
+    app->playtimeTicks += svcGetSystemTick() - app->playtimeStartTick;
+    app->playtimeStartTick = 0;
+}
+
+static void n3ds_appResumePlaytime(N3DSApplication* app) {
+    if (app->playing && app->playtimePaused == 0 && app->playtimeStartTick == 0)
+        app->playtimeStartTick = svcGetSystemTick();
+}
+
+static void n3ds_appPlaytimeHook(APT_HookType hook, void* context) {
+    N3DSApplication* app = context;
+    switch (hook) {
+    case APTHOOK_ONSUSPEND:
+        app->playtimePaused |= 1;
+        break;
+    case APTHOOK_ONSLEEP:
+        app->playtimePaused |= 2;
+        break;
+    case APTHOOK_ONRESTORE:
+        app->playtimePaused &= ~1u;
+        break;
+    case APTHOOK_ONWAKEUP:
+        app->playtimePaused &= ~2u;
+        break;
+    case APTHOOK_ONEXIT:
+        n3ds_appPausePlaytime(app);
+        return;
+    default:
+        return;
+    }
+    if (app->playtimePaused != 0) n3ds_appPausePlaytime(app);
+    else n3ds_appResumePlaytime(app);
+}
 
 static bool n3ds_appInitCitro(void) {
     bool citroReady = false;
@@ -651,12 +599,12 @@ static bool n3ds_appInitCitro(void) {
 }
 
 static void n3ds_appLoadGameSettings(N3DSRunnerSettings* settings, const char* dataWinPath) {
-    char gameRoot[1024];
-    if (!n3ds_fsGetParentDir(dataWinPath, gameRoot, sizeof(gameRoot))) return;
+    *settings = n3ds_settingsDefaults();
+    n3ds_settingsLoad(N3DS_SETTINGS_PATH, settings, NULL);
     char gameSettingsPath[1100];
-    snprintf(gameSettingsPath, sizeof(gameSettingsPath), "%s/cinnamon_settings.json", gameRoot);
-    if (!n3ds_fsPathExists(gameSettingsPath)) return;
-    *settings = n3ds_settingsLoad(gameSettingsPath);
+    if (n3ds_settingsGamePath(dataWinPath, gameSettingsPath, sizeof(gameSettingsPath)) &&
+        strcmp(gameSettingsPath, N3DS_SETTINGS_PATH) != 0)
+        n3ds_settingsLoad(gameSettingsPath, settings, NULL);
     logSetEnabled(settings->debugLogEnabled);
 }
 
@@ -680,6 +628,7 @@ static bool n3ds_appLoadInitialGame(N3DSApplication* app, int argc, char** argv)
     arrput(initialGameArgs, safeStrdup(argc > 0 && argv[0] != NULL ? argv[0] : "butterscotch"));
     bool loaded = n3ds_sessionLoad(
         &app->session, dataWinPath, initialGameArgs, &app->settings, app->citroReady);
+    if (loaded) snprintf(app->playtimePath, sizeof(app->playtimePath), "%s", dataWinPath);
     free(dataWinPath);
     n3ds_appFreeStringArray(initialGameArgs);
     return loaded;
@@ -727,6 +676,7 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
     u32 held = hidKeysHeld();
     u32 down = hidKeysDown();
     if ((held & KEY_START) && (held & KEY_SELECT) && (down & (KEY_START | KEY_SELECT))) {
+        app->returnToLauncher = true;
         C3D_endDrawFrame(app->session.renderer);
         return false;
     }
@@ -740,7 +690,11 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
     int32_t gameW = 0;
     int32_t gameH = 0;
     n3ds_appGetAppSize(runner, gen8, &gameW, &gameH);
-    n3ds_appSyncTouchMouse(&app->touchMouse, runner, gameW, gameH, held);
+    if (runner->renderGameW > 0 && runner->renderGameH > 0) {
+        gameW = runner->renderGameW;
+        gameH = runner->renderGameH;
+    }
+    n3ds_appSyncTouchMouse(&app->touchMouse, runner, gameW, gameH, held, &app->settings);
     if (app->settings.gamepadApiEnabled) {
         n3ds_padSyncPrimary(runner->gamepads, held, circle);
     } else {
@@ -765,7 +719,7 @@ static void n3ds_appStepFrame(
 static void n3ds_appDrawFrame(N3DSApplication* app, Runner* runner, Renderer* renderer,
     const Gen8* gen8, N3DSOverlayTimings* timing) {
     if (!runner->appSurfaceEnabled) {
-        runner->applicationWidth = N3DS_TOP_SCREEN_WIDTH;
+        runner->applicationWidth = gN3DSGameScreenWidth;
         runner->applicationHeight = N3DS_TOP_SCREEN_HEIGHT;
         runner->usingAppSurface = false;
     } else {
@@ -780,15 +734,26 @@ static void n3ds_appDrawFrame(N3DSApplication* app, Runner* runner, Renderer* re
     int32_t gameH = runner->applicationHeight;
     runner->widescreenExtraWidth = 0;
     runner->widescreenExtraHeight = 0;
+    if (app->settings.scaling == N3DS_SCALING_FULLSCREEN && runner->usingAppSurface && gameW > 0 && gameH > 0) {
+        int32_t wideW = (int32_t)(((int64_t)gameH * gN3DSGameScreenWidth + 120) / 240);
+        int32_t tallH = (int32_t)(((int64_t)gameW * 240 + gN3DSGameScreenWidth / 2) / gN3DSGameScreenWidth);
+        if (wideW > gameW) {
+            runner->widescreenExtraWidth = wideW - gameW;
+            gameW = wideW;
+        } else if (tallH > gameH) {
+            runner->widescreenExtraHeight = tallH - gameH;
+            gameH = tallH;
+        }
+    }
     timing->drawStartTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
-    Runner_drawPre(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
-    Runner_beginFrame(runner, gameW, gameH, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT,
-        N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
+    Runner_drawPre(runner, gN3DSGameScreenWidth, N3DS_TOP_SCREEN_HEIGHT);
+    Runner_beginFrame(runner, gameW, gameH, gN3DSGameScreenWidth, N3DS_TOP_SCREEN_HEIGHT,
+        gN3DSGameScreenWidth, N3DS_TOP_SCREEN_HEIGHT);
     Runner_drawViews(runner, gameW, gameH, false);
     renderer->vtable->endFrameInit(renderer);
-    Runner_drawPost(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
+    Runner_drawPost(runner, gN3DSGameScreenWidth, N3DS_TOP_SCREEN_HEIGHT);
     renderer->vtable->endFrameEnd(renderer);
-    Runner_drawGUI(runner, N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT, gameW, gameH);
+    Runner_drawGUI(runner, gN3DSGameScreenWidth, N3DS_TOP_SCREEN_HEIGHT, gameW, gameH);
     renderer->vtable->flush(renderer);
     C3D_presentBottomSurface(renderer);
     timing->drawEndTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
@@ -834,13 +799,17 @@ static bool n3ds_appHandleGameChange(N3DSApplication* app, Runner* runner, bool*
     char* launchParameters = runner->pendingLaunchParameters;
     runner->pendingWorkingDirectory = NULL;
     runner->pendingLaunchParameters = NULL;
+    app->playing = false;
+    n3ds_appPausePlaytime(app);
     bool ok = n3ds_sessionChangeGame(&app->session, workingDirectory, launchParameters,
         &app->settings, app->citroReady);
     free(workingDirectory);
     free(launchParameters);
     if (!ok) return false;
+    app->playing = true;
+    n3ds_appResumePlaytime(app);
     *changed = true;
-    n3ds_appResetFrameState(app, false);
+    n3ds_appResetFrameState(app, app->settings.debugStatsEnabled);
     return true;
 }
 
@@ -866,28 +835,56 @@ static bool n3ds_appRunFrame(N3DSApplication* app) {
 }
 
 static void n3ds_appRunApplication(N3DSApplication* app) {
+    app->returnToLauncher = false;
     n3ds_appResetFrameState(app, app->settings.debugStatsEnabled);
+    app->playtimeTicks = 0;
+    app->playing = true;
+    n3ds_appResumePlaytime(app);
     while (aptMainLoop() && !app->session.runner->shouldExit) {
         if (!n3ds_appRunFrame(app)) break;
     }
+    n3ds_appPausePlaytime(app);
+    app->playing = false;
+    uint64_t seconds = app->playtimeTicks / SYSCLOCK_ARM11;
+    if (!n3ds_settingsAddPlaytime(app->playtimePath, seconds))
+        logWarn("Could not save playtime: %s\n", n3ds_settingsError());
 }
 
 int main(int argc, char** argv) {
     N3DSApplication app = {0};
     gfxInitDefault();
     romfsInit();
+    aptHook(&app.playtimeHook, n3ds_appPlaytimeHook, &app);
     osSetSpeedupEnable(true);
-    app.settings = n3ds_settingsLoad(N3DS_SETTINGS_PATH);
+    app.settings = n3ds_settingsDefaults();
+    n3ds_settingsLoad(N3DS_SETTINGS_PATH, &app.settings, NULL);
     logSetEnabled(app.settings.debugLogEnabled);
     logInit();
     app.citroReady = n3ds_appInitCitro();
     if (!n3ds_appLoadInitialGame(&app, argc, argv)) {
+        aptUnhook(&app.playtimeHook);
         n3ds_appShutdown(app.citroReady);
         return 1;
     }
 
-    n3ds_appRunApplication(&app);
-    n3ds_sessionDestroy(&app.session);
+    while (true) {
+        n3ds_appRunApplication(&app);
+        if (app.citroReady && C3D_FrameBegin(0)) C3D_FrameEnd(0);
+        n3ds_sessionDestroy(&app.session);
+        if (!app.returnToLauncher) break;
+
+        bool released = false;
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (!(hidKeysHeld() & (KEY_START | KEY_SELECT))) {
+                released = true;
+                break;
+            }
+            gspWaitForVBlank();
+        }
+        if (!released || !n3ds_appLoadInitialGame(&app, argc, argv)) break;
+    }
+    aptUnhook(&app.playtimeHook);
     n3ds_appShutdown(app.citroReady);
     return 0;
 }

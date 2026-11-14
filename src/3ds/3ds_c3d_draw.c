@@ -73,6 +73,7 @@ static bool n3ds_c3dReserve(
     N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t vertexCount, bool indexedQuads,
     bool linear) {
     if (ctx == NULL) return false;
+    if (ctx->forceNearest) linear = false;
     uint32_t batchVertexCapacity = indexedQuads ? ctx->quadCapacity * 4u : ctx->vertexCapacity;
     if (vertexCount > batchVertexCapacity) return false;
     if (tex == NULL) tex = &ctx->whiteTex;
@@ -361,7 +362,7 @@ void n3ds_c3dSetColorMask(
 }
 
 void n3ds_c3dSetTexFilter(N3DSC3DDrawContext* ctx, bool linear) {
-    if (ctx != NULL) ctx->texFilter = linear;
+    if (ctx != NULL) ctx->texFilter = linear && !ctx->forceNearest;
 }
 
 void n3ds_c3dFlush(N3DSC3DDrawContext* ctx) {

@@ -5,9 +5,9 @@
 
 #include "../renderer.h"
 #include "3ds_c3d_draw.h"
+#include "3ds_settings.h"
 
-Renderer* C3D_create(
-    bool cacheAtlas, uint32_t atlasTextureCacheBytes, bool halfResApplicationSurface);
+Renderer* C3D_create(const N3DSRunnerSettings* settings);
 void C3D_beginDrawFrame(Renderer* renderer);
 void C3D_endDrawFrame(Renderer* renderer);
 N3DSC3DVertex* C3D_beginVertices(

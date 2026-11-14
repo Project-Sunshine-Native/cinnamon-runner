@@ -249,7 +249,7 @@ if(PLATFORM STREQUAL "ps2" OR PLATFORM STREQUAL "ps3" OR PLATFORM STREQUAL "andr
 endif()
 
 # Platform specific files builds
-file(GLOB PLATFORM_SOURCES src/${PLATFORM}/*.c)
+file(GLOB PLATFORM_SOURCES CONFIGURE_DEPENDS src/${PLATFORM}/*.c)
 
 if(PLATFORM STREQUAL "android")
     add_library(butterscotch SHARED ${SOURCES} ${PLATFORM_SOURCES} ${AUDIO_SOURCES} ${DEFAULT_FONT_SOURCES})
@@ -1149,6 +1149,7 @@ elseif(PLATFORM STREQUAL "wii")
     )
 elseif(PLATFORM STREQUAL "3ds")
     set_target_properties(butterscotch PROPERTIES OUTPUT_NAME cinnamon)
+    target_sources(butterscotch PRIVATE src/image/image_decoder.c)
     add_compile_definitions(PLATFORM_3DS USE_FLOAT_REALS NO_RVALUE_INT64)
 
     option(APPSURFACE-HALF "Render the 3DS application surface at half resolution (640x480 to 320x240)" OFF)
@@ -1383,19 +1384,38 @@ elseif(PLATFORM STREQUAL "3ds")
         message(STATUS "tex3ds not found; built-in 3DS ROMFS textures will not be converted.")
     endif()
 
+    set(N3DS_MENU_T3X_OUTPUTS)
+    foreach(N3DS_MENU_TEXTURE font door soul intro_logo intro_heart intro_depth intro_noise 270767334)
+        set(N3DS_MENU_SOURCE ${N3DS_ROMFS_SOURCE_DIR}/launcher/${N3DS_MENU_TEXTURE}.png)
+        if(EXISTS ${N3DS_MENU_SOURCE})
+            if(NOT CTR_TEX3DS)
+                message(FATAL_ERROR "tex3ds is required to package the 3DS launcher textures")
+            endif()
+            set(N3DS_MENU_GENERATED ${N3DS_GENERATED_DIR}/romfs/launcher/${N3DS_MENU_TEXTURE}.t3x)
+            add_custom_command(
+                OUTPUT ${N3DS_MENU_GENERATED}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${N3DS_GENERATED_DIR}/romfs/launcher
+                COMMAND ${CTR_TEX3DS} -f rgba8 -o ${N3DS_MENU_GENERATED} ${N3DS_MENU_SOURCE}
+                DEPENDS ${N3DS_MENU_SOURCE}
+                COMMENT "Converting 3DS launcher texture ${N3DS_MENU_TEXTURE}"
+            )
+            list(APPEND N3DS_MENU_T3X_OUTPUTS ${N3DS_MENU_GENERATED})
+        endif()
+    endforeach()
+
     if(useROMFS AND NOT EXISTS ${N3DS_ROMFS_SOURCE_DIR}/data.win)
         message(FATAL_ERROR "useROMFS requires ${N3DS_ROMFS_SOURCE_DIR}/data.win")
     endif()
 
     file(GLOB_RECURSE N3DS_BUNDLED_ROMFS_FILES CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE ${N3DS_ROMFS_SOURCE_DIR}/*)
-    if(N3DS_BUNDLED_ROMFS_FILES OR N3DS_ROMFS_T3X_OUTPUTS)
+    if(N3DS_BUNDLED_ROMFS_FILES OR N3DS_ROMFS_T3X_OUTPUTS OR N3DS_MENU_T3X_OUTPUTS)
         set(N3DS_ROMFS_STAMP ${N3DS_BUILD_RESOURCE_DIR}/romfs-copy.stamp)
         add_custom_command(
             OUTPUT ${N3DS_ROMFS_STAMP}
             COMMAND ${CMAKE_COMMAND} -E rm -rf ${N3DS_ROMFS_DIR}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${N3DS_ROMFS_DIR}
             COMMAND ${CMAKE_COMMAND} -E copy_directory ${N3DS_ROMFS_SOURCE_DIR} ${N3DS_ROMFS_DIR}
-            DEPENDS ${N3DS_BUNDLED_ROMFS_FILES} ${N3DS_ROMFS_T3X_OUTPUTS}
+            DEPENDS ${N3DS_BUNDLED_ROMFS_FILES} ${N3DS_ROMFS_T3X_OUTPUTS} ${N3DS_MENU_T3X_OUTPUTS}
             COMMENT "Staging 3DS RomFS resources"
         )
         if(N3DS_ROMFS_T3X_OUTPUTS)
@@ -1404,11 +1424,18 @@ elseif(PLATFORM STREQUAL "3ds")
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${N3DS_GENERATED_DIR}/romfs/gfx/debugTinyFont.t3x ${N3DS_ROMFS_DIR}/gfx/debugTinyFont.t3x
             )
         endif()
+        if(N3DS_MENU_T3X_OUTPUTS)
+            add_custom_command(
+                OUTPUT ${N3DS_ROMFS_STAMP} APPEND
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${N3DS_ROMFS_DIR}/launcher
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${N3DS_MENU_T3X_OUTPUTS} ${N3DS_ROMFS_DIR}/launcher
+            )
+        endif()
         add_custom_command(
             OUTPUT ${N3DS_ROMFS_STAMP} APPEND
             COMMAND ${CMAKE_COMMAND} -E touch ${N3DS_ROMFS_STAMP}
         )
-        list(APPEND N3DS_RESOURCE_OUTPUTS ${N3DS_ROMFS_STAMP} ${N3DS_ROMFS_T3X_OUTPUTS})
+        list(APPEND N3DS_RESOURCE_OUTPUTS ${N3DS_ROMFS_STAMP} ${N3DS_ROMFS_T3X_OUTPUTS} ${N3DS_MENU_T3X_OUTPUTS})
         list(APPEND N3DS_3DSXTOOL_ARGS --romfs=${N3DS_ROMFS_DIR})
         set(N3DS_ROMFS_PREPARED TRUE)
     else()

@@ -171,64 +171,6 @@ void n3ds_loadWaitForStart(N3DSLoadingScreen* screen, const char* statusLine) {
     }
 }
 
-int n3ds_loadSelectGame(N3DSLoadingScreen* screen, char* const* gamePaths, int gameCount) {
-    if (screen == NULL || screen->target == NULL || screen->textBuffer == NULL || gameCount <= 0)
-        return -1;
-    enum { visibleGames = 6 };
-    int selected = 0;
-    hidScanInput();
-    while (aptMainLoop()) {
-        if (!n3ds_loadBeginFrame(screen)) return -1;
-        C2D_TextBufClear(screen->textBuffer);
-        n3ds_loadDrawCenteredText(
-            screen, "Cinnamon", 8.0f, 0.8f, C2D_Color32(82, 165, 232, 255));
-        n3ds_loadDrawCenteredText(
-            screen, "Select a game", 36.0f, 0.55f, C2D_Color32(255, 255, 255, 255));
-
-        int first = (selected / visibleGames) * visibleGames;
-        for (int row = 0; row < visibleGames && first + row < gameCount; ++row) {
-            int index = first + row;
-            const char* end = strrchr(gamePaths[index], '/');
-            const char* name = end;
-            if (name != NULL) {
-                while (name > gamePaths[index] && name[-1] != '/') --name;
-            } else {
-                name = gamePaths[index];
-                end = name + strlen(name);
-            }
-            int nameLength = (int)(end - name);
-            char line[64];
-            snprintf(line, sizeof(line), "%s %.*s%s", index == selected ? ">" : " ",
-                nameLength > 50 ? 47 : nameLength, name, nameLength > 50 ? "..." : "");
-            C2D_Text text = {0};
-            C2D_TextParse(&text, screen->textBuffer, line);
-            float width = 0.0f;
-            C2D_TextGetDimensions(&text, 0.55f, 0.55f, &width, NULL);
-            float scale = width > 352.0f ? 0.55f * 352.0f / width : 0.55f;
-            uint32_t color = index == selected ? C2D_Color32(82, 165, 232, 255)
-                                               : C2D_Color32(170, 170, 170, 255);
-            C2D_DrawText(&text, C2D_WithColor, 24.0f, 66.0f + (float)row * 21.0f,
-                0.25f, scale, scale, color);
-        }
-
-        char position[48];
-        snprintf(position, sizeof(position), "%d / %d", selected + 1, gameCount);
-        n3ds_loadDrawCenteredText(
-            screen, position, 199.0f, 0.45f, C2D_Color32(170, 170, 170, 255));
-        C2D_Flush();
-        C3D_FrameEnd(0);
-        gspWaitForVBlank();
-
-        hidScanInput();
-        u32 down = hidKeysDown();
-        if (down & (KEY_B | KEY_START)) return -1;
-        if ((down & KEY_UP) && !(down & KEY_DOWN)) selected = (selected + gameCount - 1) % gameCount;
-        if ((down & KEY_DOWN) && !(down & KEY_UP)) selected = (selected + 1) % gameCount;
-        if (down & KEY_A) return selected;
-    }
-    return -1;
-}
-
 typedef struct {
     bool ready;
     bool failed;

@@ -59,6 +59,9 @@ AccessControlInfo:
   IORegisterMapping:
    - 1ff00000-1ff7ffff
 
+  MemoryMapping:
+   - 1f000000-1f5fffff:r
+
   SystemCallAccess:
     ArbitrateAddress: 34
 
@@ -131,4 +134,3 @@ SystemControlInfo:
   Dependency:
 
     dsp: 0x0004013000001a02
-

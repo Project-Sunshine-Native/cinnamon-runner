@@ -69,6 +69,7 @@ typedef struct {
     uint8_t colorMask;
     bool batchIndexedQuads;
     bool texFilter;
+    bool forceNearest;
     bool batchTexFilter;
     bool bufferDirty;
     bool stateDirty;

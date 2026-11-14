@@ -354,6 +354,9 @@ typedef struct {
     bool ready;
     bool cacheAtlas;
     bool halfResApplicationSurface;
+    bool gameOnBottom;
+    bool filteringOff;
+    int scaling;
     uint32_t atlasTextureCacheBytes;
     char startupError[192];
     C3D_RenderTarget* topTarget;
@@ -402,6 +405,14 @@ typedef struct {
     bool hostViewProjectionActive;
     N3DSRenderStateSnapshot* targetStack;
 } N3DSRenderer;
+
+static int32_t C3D_primaryWidth(const N3DSRenderer* renderer) {
+    return renderer->gameOnBottom ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH;
+}
+
+static int32_t C3D_secondaryWidth(const N3DSRenderer* renderer) {
+    return renderer->gameOnBottom ? N3DS_TOP_WIDTH : N3DS_BOTTOM_WIDTH;
+}
 
 struct N3DSRenderStateSnapshot {
     int32_t targetSurfaceId;
@@ -764,13 +775,21 @@ static uint32_t C3D_atlasNativeFormat(uint32_t pageFormat) {
     }
 }
 
-static void C3D_letterboxRect(int32_t srcW, int32_t srcH, int32_t dstW, int32_t dstH,
+static void C3D_letterboxRect(const N3DSRenderer* renderer,
+    int32_t srcW, int32_t srcH, int32_t dstW, int32_t dstH,
     float* outLeft, float* outTop, float* outRight, float* outBottom) {
     if (outLeft == NULL || outTop == NULL || outRight == NULL || outBottom == NULL || srcW <= 0 ||
         srcH <= 0 || dstW <= 0 || dstH <= 0)
         return;
     int32_t scaledW = dstW;
     int32_t scaledH = dstH;
+    if (renderer->scaling == N3DS_SCALING_STRETCH) {
+        *outLeft = 0;
+        *outTop = 0;
+        *outRight = (float)dstW;
+        *outBottom = (float)dstH;
+        return;
+    }
     if (((int64_t)srcW * (int64_t)dstH) < ((int64_t)dstW * (int64_t)srcH))
         scaledW = (int32_t)(((int64_t)srcW * (int64_t)dstH) / (int64_t)srcH);
     else
@@ -2194,8 +2213,8 @@ static bool C3D_getLineClipRect(
     if (renderer->currentTargetSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER) {
         *left = 0.0f;
         *top = 0.0f;
-        *right =
-            (float)(renderer->currentHostTargetIsBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH);
+        *right = (float)(renderer->currentHostTargetIsBottomScreen
+            ? C3D_secondaryWidth(renderer) : C3D_primaryWidth(renderer));
         *bottom = (float)(renderer->currentHostTargetIsBottomScreen
                 ? N3DS_BOTTOM_HEIGHT
                 : N3DS_TOP_HEIGHT);
@@ -2329,8 +2348,8 @@ static void C3D_getHostViewport(const N3DSRenderer* renderer, int32_t portX,
     int32_t* outH) {
     if (outX == NULL || outY == NULL || outW == NULL || outH == NULL) return;
     int32_t hostW = renderer->currentHostTargetIsBottomScreen
-                        ? N3DS_BOTTOM_WIDTH
-                        : N3DS_TOP_WIDTH;
+                        ? C3D_secondaryWidth(renderer)
+                        : C3D_primaryWidth(renderer);
     int32_t hostH = renderer->currentHostTargetIsBottomScreen
                         ? N3DS_BOTTOM_HEIGHT
                         : N3DS_TOP_HEIGHT;
@@ -2346,7 +2365,7 @@ static void C3D_getHostViewport(const N3DSRenderer* renderer, int32_t portX,
     float right = (float)hostW;
     float bottom = (float)hostH;
     C3D_letterboxRect(
-        renderer->frameGameW, renderer->frameGameH, hostW, hostH, &left, &top, &right, &bottom);
+        renderer, renderer->frameGameW, renderer->frameGameH, hostW, hostH, &left, &top, &right, &bottom);
     float scaleX = renderer->frameGameW > 0 ? (right - left) / (float)renderer->frameGameW : 1.0f;
     float scaleY = renderer->frameGameH > 0 ? (bottom - top) / (float)renderer->frameGameH : 1.0f;
     *outX = (int32_t)floorf(left + (float)portX * scaleX + 0.5f);
@@ -2355,7 +2374,8 @@ static void C3D_getHostViewport(const N3DSRenderer* renderer, int32_t portX,
     *outH = (int32_t)floorf((float)portH * scaleY + 0.5f);
 }
 
-static void C3D_getHostGuiViewport(int32_t guiW, int32_t guiH, int32_t portX,
+static void C3D_getHostGuiViewport(const N3DSRenderer* renderer,
+    int32_t guiW, int32_t guiH, int32_t portX,
     int32_t portY, int32_t portW, int32_t portH, int32_t* outX, int32_t* outY, int32_t* outW,
     int32_t* outH) {
     if (outX == NULL || outY == NULL || outW == NULL || outH == NULL) return;
@@ -2371,7 +2391,7 @@ static void C3D_getHostGuiViewport(int32_t guiW, int32_t guiH, int32_t portX,
     float top = 0.0f;
     float right = (float)portW;
     float bottom = (float)portH;
-    C3D_letterboxRect(guiW, guiH, portW, portH, &left, &top, &right, &bottom);
+    C3D_letterboxRect(renderer, guiW, guiH, portW, portH, &left, &top, &right, &bottom);
     *outX = portX + (int32_t)floorf(left + 0.5f);
     *outY = portY + (int32_t)floorf(top + 0.5f);
     *outW = (int32_t)floorf((right - left) + 0.5f);
@@ -3480,8 +3500,8 @@ static float C3D_minimumLineWidth(const N3DSRenderer* renderer, bool renderSpace
     if (surface != NULL && surfaceID == appSurfaceID && surface->width > 0 &&
         surface->height > 0 && renderer->frameGameW > 0 && renderer->frameGameH > 0) {
         float left, top, right, bottom;
-        C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH,
-            N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
+        C3D_letterboxRect(renderer, renderer->frameGameW, renderer->frameGameH,
+            C3D_primaryWidth(renderer), N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
         displayScale = fminf((right - left) / surface->width, (bottom - top) / surface->height);
         if (displayScale <= 0.0f) displayScale = 1.0f;
     }
@@ -3893,19 +3913,19 @@ static void C3D_getAppSurfaceSize(
 
 static void C3D_bindTopScreenTarget(N3DSRenderer* renderer) {
     C3D_bindTarget(renderer, RENDER_TARGET_HOST_FRAMEBUFFER, false);
-    n3ds_c3dUpdateProjection(&renderer->drawContext, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
+    n3ds_c3dUpdateProjection(&renderer->drawContext, C3D_primaryWidth(renderer), N3DS_TOP_HEIGHT);
     renderer->screenTransformActive = false;
     renderer->customCameraTransformActive = false;
     renderer->currentLogicalPortX = 0;
     renderer->currentLogicalPortY = 0;
-    renderer->currentLogicalPortW = N3DS_TOP_WIDTH;
+    renderer->currentLogicalPortW = C3D_primaryWidth(renderer);
     renderer->currentLogicalPortH = N3DS_TOP_HEIGHT;
 }
 
 static void C3D_updateHostProjection(N3DSRenderer* renderer) {
     renderer->hostViewProjectionActive = false;
     n3ds_c3dUpdateProjection(&renderer->drawContext,
-        renderer->currentHostTargetIsBottomScreen ? N3DS_BOTTOM_WIDTH : N3DS_TOP_WIDTH,
+        renderer->currentHostTargetIsBottomScreen ? C3D_secondaryWidth(renderer) : C3D_primaryWidth(renderer),
         renderer->currentHostTargetIsBottomScreen ? N3DS_BOTTOM_HEIGHT : N3DS_TOP_HEIGHT);
 }
 
@@ -3932,9 +3952,9 @@ static void C3D_blitAppSurface(N3DSRenderer* renderer) {
 
     float left = 0.0f;
     float top = 0.0f;
-    float right = (float)N3DS_TOP_WIDTH;
+    float right = (float)C3D_primaryWidth(renderer);
     float bottom = (float)N3DS_TOP_HEIGHT;
-    C3D_letterboxRect(renderer->frameGameW, renderer->frameGameH, N3DS_TOP_WIDTH,
+    C3D_letterboxRect(renderer, renderer->frameGameW, renderer->frameGameH, C3D_primaryWidth(renderer),
         N3DS_TOP_HEIGHT, &left, &top, &right, &bottom);
     float u1 = surface->texWidth > 0 ? (float)surface->width / (float)surface->texWidth : 1.0f;
     float v0 = surface->texHeight > 0
@@ -4518,10 +4538,10 @@ static bool C3D_setTargetProjection(Renderer* base, int32_t surfaceID) {
         renderer->currentLogicalPortW = C3D_surfaceLogicalWidth(surface);
         renderer->currentLogicalPortH = C3D_surfaceLogicalHeight(surface);
     } else {
-        n3ds_c3dUpdateProjection(&renderer->drawContext, N3DS_TOP_WIDTH, N3DS_TOP_HEIGHT);
+        n3ds_c3dUpdateProjection(&renderer->drawContext, C3D_primaryWidth(renderer), N3DS_TOP_HEIGHT);
         renderer->currentLogicalPortX = 0;
         renderer->currentLogicalPortY = 0;
-        renderer->currentLogicalPortW = N3DS_TOP_WIDTH;
+        renderer->currentLogicalPortW = C3D_primaryWidth(renderer);
         renderer->currentLogicalPortH = N3DS_TOP_HEIGHT;
     }
     renderer->currentViewX = 0;
@@ -5419,14 +5439,15 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
         return;
     }
     renderer->drawContextReady = true;
+    renderer->drawContext.forceNearest = renderer->filteringOff;
     renderer->drawContext.finishDraws = C3D_finishVertexStream;
     renderer->drawContext.finishDrawsUser = renderer;
     n3ds_c3dSetTexFilter(&renderer->drawContext, base->texFilter);
     renderer->topTarget = C3D_RenderTargetCreate(
-        N3DS_TOP_HEIGHT, N3DS_TOP_WIDTH, GPU_RB_RGBA8, -1);
+        N3DS_TOP_HEIGHT, C3D_primaryWidth(renderer), GPU_RB_RGBA8, -1);
 #if !N3DS_DISABLE_GAME_BOTTOM_SCREEN
     renderer->bottomTarget = C3D_RenderTargetCreate(
-        N3DS_BOTTOM_HEIGHT, N3DS_BOTTOM_WIDTH, GPU_RB_RGBA8, -1);
+        N3DS_BOTTOM_HEIGHT, C3D_secondaryWidth(renderer), GPU_RB_RGBA8, -1);
 #endif
     if (renderer->topTarget == NULL
 #if !N3DS_DISABLE_GAME_BOTTOM_SCREEN
@@ -5436,9 +5457,11 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
         C3D_setError(renderer, "Failed to create 3DS render targets");
         return;
     }
-    C3D_RenderTargetSetOutput(renderer->topTarget, GFX_TOP, GFX_LEFT, N3DS_TRANSFER_FLAGS);
+    C3D_RenderTargetSetOutput(renderer->topTarget, renderer->gameOnBottom ? GFX_BOTTOM : GFX_TOP,
+        GFX_LEFT, N3DS_TRANSFER_FLAGS);
 #if !N3DS_DISABLE_GAME_BOTTOM_SCREEN
-    C3D_RenderTargetSetOutput(renderer->bottomTarget, GFX_BOTTOM, GFX_LEFT, N3DS_TRANSFER_FLAGS);
+    C3D_RenderTargetSetOutput(renderer->bottomTarget, renderer->gameOnBottom ? GFX_TOP : GFX_BOTTOM,
+        GFX_LEFT, N3DS_TRANSFER_FLAGS);
 #endif
     if (base->runner != NULL && base->runner->appSurfaceEnabled && base->runner->usingAppSurface) {
         int32_t appW = base->runner->applicationWidth > 0
@@ -5811,7 +5834,7 @@ static void C3D_beginGUI(Renderer* base, int32_t guiW, int32_t guiH, int32_t por
     int32_t hostPortY = 0;
     int32_t hostPortW = 0;
     int32_t hostPortH = 0;
-    C3D_getHostGuiViewport(
+    C3D_getHostGuiViewport(renderer,
         guiW, guiH, portX, portY, portW, portH, &hostPortX, &hostPortY, &hostPortW, &hostPortH);
     renderer->base.CPortX = hostPortX;
     renderer->base.CPortY = hostPortY;
@@ -5939,16 +5962,19 @@ void C3D_getViewRect(const Renderer* renderer, int32_t rect[4]) {
     rect[3] = n3ds->currentViewH;
 }
 
-Renderer* C3D_create(
-    bool cacheAtlas, uint32_t atlasTextureCacheBytes, bool halfResApplicationSurface) {
+Renderer* C3D_create(const N3DSRunnerSettings* settings) {
     N3DSRenderer* renderer = safeCalloc(1, sizeof(N3DSRenderer));
     renderer->base.vtable = &gN3DSRendererVtable;
-    renderer->cacheAtlas = cacheAtlas;
+    renderer->cacheAtlas = settings->cacheAtlas;
+    renderer->gameOnBottom = settings->bottomScreen;
+    renderer->scaling = settings->scaling;
+    renderer->filteringOff = settings->filteringOff;
+    bool halfResApplicationSurface = settings->halfResApplicationSurface;
 #if defined(APPSURFACE_HALF) && APPSURFACE_HALF
     halfResApplicationSurface = true;
 #endif
     renderer->halfResApplicationSurface = halfResApplicationSurface;
-    renderer->atlasTextureCacheBytes = atlasTextureCacheBytes;
+    renderer->atlasTextureCacheBytes = (uint32_t)settings->atlasTextureCacheMb * 1024u * 1024u;
     renderer->base.drawColor = 0xFFFFFFu;
     renderer->base.drawAlpha = 1.0f;
     renderer->base.drawFont = -1;
@@ -6026,9 +6052,10 @@ const char* C3D_getStartupError(Renderer* renderer) {
 static bool C3D_ensureBottomTarget(N3DSRenderer* renderer) {
     if (renderer->bottomTarget != NULL) return true;
     renderer->bottomTarget = C3D_RenderTargetCreate(
-        N3DS_BOTTOM_HEIGHT, N3DS_BOTTOM_WIDTH, GPU_RB_RGBA8, -1);
+        N3DS_BOTTOM_HEIGHT, C3D_secondaryWidth(renderer), GPU_RB_RGBA8, -1);
     if (renderer->bottomTarget == NULL) return false;
-    C3D_RenderTargetSetOutput(renderer->bottomTarget, GFX_BOTTOM, GFX_LEFT, N3DS_TRANSFER_FLAGS);
+    C3D_RenderTargetSetOutput(renderer->bottomTarget, renderer->gameOnBottom ? GFX_TOP : GFX_BOTTOM,
+        GFX_LEFT, N3DS_TRANSFER_FLAGS);
     return true;
 }
 
@@ -6045,14 +6072,14 @@ static void C3D_beginBottomGUIImpl(
     }
     n3ds->base.CPortX = 0;
     n3ds->base.CPortY = 0;
-    n3ds->base.CPortW = N3DS_BOTTOM_WIDTH;
+    n3ds->base.CPortW = C3D_secondaryWidth(n3ds);
     n3ds->base.CPortH = N3DS_BOTTOM_HEIGHT;
     n3ds->currentLogicalPortX = 0;
     n3ds->currentLogicalPortY = 0;
-    n3ds->currentLogicalPortW = N3DS_BOTTOM_WIDTH;
+    n3ds->currentLogicalPortW = C3D_secondaryWidth(n3ds);
     n3ds->currentLogicalPortH = N3DS_BOTTOM_HEIGHT;
     n3ds->base.vtable->setGuiProjection(
-        renderer, guiW, guiH, N3DS_BOTTOM_WIDTH, N3DS_BOTTOM_HEIGHT, false);
+        renderer, guiW, guiH, C3D_secondaryWidth(n3ds), N3DS_BOTTOM_HEIGHT, false);
 }
 #endif
 
@@ -6080,9 +6107,9 @@ void C3D_presentBottomSurface(MAYBE_UNUSED Renderer* renderer) {
     }
 
     C3D_beginBottomGUIImpl(
-        renderer, N3DS_BOTTOM_WIDTH, N3DS_BOTTOM_HEIGHT, true);
+        renderer, C3D_secondaryWidth(n3ds), N3DS_BOTTOM_HEIGHT, true);
     renderer->vtable->drawSurface(renderer, surfaceID, 0, 0, width, height, 0.0f, 0.0f,
-        (float)N3DS_BOTTOM_WIDTH / (float)width, (float)N3DS_BOTTOM_HEIGHT / (float)height, 0.0f,
+        (float)C3D_secondaryWidth(n3ds) / (float)width, (float)N3DS_BOTTOM_HEIGHT / (float)height, 0.0f,
         0xFFFFFFu, 1.0f);
     n3ds_c3dFlush(&n3ds->drawContext);
     C3D_restoreRenderState(n3ds, &savedState, -1);
@@ -6141,7 +6168,11 @@ void C3D_restoreTopScreenOutput(Renderer* renderer) {
     assert(renderer != NULL);
     N3DSRenderer* n3ds = (N3DSRenderer*)renderer;
     if (n3ds->topTarget == NULL) return;
-    C3D_RenderTargetSetOutput(n3ds->topTarget, GFX_TOP, GFX_LEFT, N3DS_TRANSFER_FLAGS);
+    C3D_RenderTargetSetOutput(n3ds->topTarget, n3ds->gameOnBottom ? GFX_BOTTOM : GFX_TOP,
+        GFX_LEFT, N3DS_TRANSFER_FLAGS);
+    if (n3ds->bottomTarget != NULL)
+        C3D_RenderTargetSetOutput(n3ds->bottomTarget, n3ds->gameOnBottom ? GFX_TOP : GFX_BOTTOM,
+            GFX_LEFT, N3DS_TRANSFER_FLAGS);
 }
 
 bool C3D_bottomScreenUsed(MAYBE_UNUSED Renderer* renderer) {
