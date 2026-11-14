@@ -443,7 +443,7 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     session->audioSystem = (AudioSystem*)n3ds_audioCreate();
 
     session->audioSystem->vtable->init(session->audioSystem, session->dataWin, session->fileSystem);
-    n3ds_audioSetOutputGain((N3DSAudioSystem*)session->audioSystem,
+    session->audioSystem->vtable->setMasterGain(session->audioSystem,
         settings->mute ? 0.0f : (float)settings->volume / 100.0f);
     if (!n3ds_audioIsReady((N3DSAudioSystem*)session->audioSystem)) {
         const char* error =
