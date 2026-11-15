@@ -149,6 +149,7 @@ struct N3DSAudioSystem {
     bool initialized;
     bool ndspAvailable;
     float masterGain;
+    float outputGain;
     N3DSStreamEntry streams[N3DS_MAX_STREAMS];
     N3DSSoundInstance instances[N3DS_MAX_SOUND_INSTANCES];
     int32_t lastResolveFailureSound;
@@ -588,7 +589,8 @@ static void n3ds_audioApplyMix(N3DSAudioSystem* audio, N3DSSoundInstance* inst) 
     memset(mix, 0, sizeof(mix));
     inst->gain = Audio_sanitizeGain(inst->gain);
     float gain =
-        inst->gain * audio->masterGain * AudioSystem_soundGroupGain(&audio->base, inst->soundIndex);
+        inst->gain * audio->masterGain * audio->outputGain *
+        AudioSystem_soundGroupGain(&audio->base, inst->soundIndex);
     if (inst->useNativeAdpcm && inst->secondaryChannelId >= 0) {
         mix[0] = gain;
         ndspChnSetMix(inst->channelId, mix);
@@ -2196,10 +2198,20 @@ N3DSAudioSystem* n3ds_audioCreate(void) {
     N3DSAudioSystem* audio = safeCalloc(1, sizeof(N3DSAudioSystem));
     audio->base.vtable = &N3DSAudio_vtable;
     audio->masterGain = 1.0f;
+    audio->outputGain = 1.0f;
     audio->nextStreamChannel = N3DS_STREAM_CHANNEL_FIRST;
     audio->nextSoundChannel = N3DS_SOUND_CHANNEL_FIRST;
     audio->lastResolveFailureSound = INT32_MIN;
     return audio;
+}
+
+void n3ds_audioSetOutputGain(N3DSAudioSystem* audio, float gain) {
+    LightLock_Lock(&audio->lock);
+    audio->outputGain = Audio_sanitizeGain(gain);
+    repeat(N3DS_MAX_SOUND_INSTANCES, i) {
+        if (audio->instances[i].active) n3ds_audioApplyMix(audio, &audio->instances[i]);
+    }
+    LightLock_Unlock(&audio->lock);
 }
 
 bool n3ds_audioIsReady(const N3DSAudioSystem* audio) {
