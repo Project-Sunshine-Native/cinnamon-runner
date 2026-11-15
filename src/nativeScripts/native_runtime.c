@@ -58,6 +58,15 @@ void NativeScriptScope_finish(NativeScriptScope* scope, RValue* outResult, RValu
     NativeScriptScope_destroy(scope);
 }
 
+int32_t NativeScript_getSelfVarID(VMContext* ctx, const char* name) {
+    for (uint32_t i = 0; i < ctx->dataWin->vari.variableCount; ++i) {
+        Variable* variable = &ctx->dataWin->vari.variables[i];
+        if (variable->instanceType == INSTANCE_SELF && variable->varID >= 0 &&
+            strcmp(variable->name, name) == 0) return variable->varID;
+    }
+    return VM_getOrAllocateVarID(ctx, name);
+}
+
 static void resolveVariableBinding(VMContext* ctx, NativeVarBinding* binding, const char* name) {
     if (binding->owner == ctx) return;
     binding->owner = ctx;

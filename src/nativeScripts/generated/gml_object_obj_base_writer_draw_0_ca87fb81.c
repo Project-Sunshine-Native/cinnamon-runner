@@ -290,10 +290,9 @@ static GMLReal getIdealBorderTop(Instance* global, int32_t idealBorderId) {
     return RValue_toReal(GMLArray_get(idealBorder.array, 2));
 }
 
-static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
-    VMContext* ctx, RValue* outResult) {
+static bool drawBaseWriter(VMContext* ctx, RValue* outResult, bool bc16) {
     if (ctx == nullptr || ctx->currentCallFrame == nullptr ||
-        ctx->dataWin->gen8.wadVersion != 17) return false;
+        ctx->dataWin->gen8.wadVersion != (bc16 ? 16 : 17)) return false;
 
     Instance* self = ctx->currentCallFrame->self;
     Instance* global = ctx->globalScopeInstance;
@@ -304,7 +303,7 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
     resolveCache(ctx);
     FastWriterCache* cache = &fastWriterCache;
 
-    if (RValue_toBool(getVariable(global, cache->battleActive))) return false;
+    if (!bc16 && RValue_toBool(getVariable(global, cache->battleActive))) return false;
     if (!isEnglish(global, cache->language)) return false;
     if (RValue_toBool(getVariable(self, cache->vText))) return false;
 
@@ -333,7 +332,7 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
     }
 
     // A controller transition rebuilds the string. Let bytecode handle that one frame.
-    if (getNumber(self, cache->controllerConnected) !=
+    if (!bc16 && getNumber(self, cache->controllerConnected) !=
         getNumber(global, cache->globalControllerConnected)) return false;
 
     Renderer* renderer = runner->renderer;
@@ -344,7 +343,7 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
     GMLReal vSpacing = getNumber(self, cache->vSpacing);
     GMLReal x = writingX;
     GMLReal y = writingY;
-    if (RValue_toBool(getVariable(global, cache->battleTopObjectsShifted)) &&
+    if (!bc16 && RValue_toBool(getVariable(global, cache->battleTopObjectsShifted)) &&
         writingY < getIdealBorderTop(global, cache->idealBorder)) {
         y += 120;
     }
@@ -364,8 +363,8 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
     if (viewWidth == 0 || applicationWidth <= 0) return false;
     GMLReal displayScale = applicationWidth / viewWidth;
 
-    bool filteredFont = font == cache->fontPlain || font == cache->fontPapyrus ||
-        font == cache->fontComicSans;
+    bool filteredFont = !bc16 && (font == cache->fontPlain || font == cache->fontPapyrus ||
+        font == cache->fontComicSans);
     int32_t glyphCount = 0;
 
     int32_t bytePos = 0;
@@ -471,6 +470,10 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
             break;
 
         case FAST_WRITER_TERMINAL_PAGE: {
+            if (bc16) {
+                setNumber(self, cache->myX, x);
+                setNumber(self, cache->myY, y);
+            }
             setNumber(self, cache->stringNo, nextStringNo);
             RValue replaced = NativeScript_call(ctx, &replaceButtonsCall,
                 "gml_Script_scr_replace_buttons_pc", &nextPage, 1);
@@ -479,7 +482,7 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
             setNumber(self, cache->stringPos, 0);
             setNumber(self, cache->myX, writingX);
             GMLReal pageY = writingY;
-            if (RValue_toBool(getVariable(global, cache->battleTopObjectsShifted)) &&
+            if (!bc16 && RValue_toBool(getVariable(global, cache->battleTopObjectsShifted)) &&
                 writingY < getIdealBorderTop(global, cache->idealBorder)) {
                 pageY += 120;
             }
@@ -504,9 +507,19 @@ static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
     return true;
 }
 
+bool NativeBaseWriter_drawBc16(VMContext* ctx, RValue* outResult) {
+    return drawBaseWriter(ctx, outResult, true);
+}
+
+static bool NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler(
+    VMContext* ctx, RValue* outResult) {
+    return drawBaseWriter(ctx, outResult, false);
+}
+
 void NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_register(VMContext* ctx) {
     fastWriterCache.owner = nullptr;
     replaceButtonsCall = (NativeCallBinding)NATIVE_CALL_BINDING_INIT;
+    if (ctx->dataWin->gen8.wadVersion == 16) return;
     (void)VM_registerNativeScript(ctx, "gml_Object_obj_base_writer_Draw_0",
         NativeGenerated_gml_object_obj_base_writer_draw_0_ca87fb81_handler);
 }
