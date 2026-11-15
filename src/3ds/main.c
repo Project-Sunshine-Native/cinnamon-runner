@@ -786,9 +786,14 @@ static void n3ds_appPresentFrame(Runner* runner, Renderer* renderer) {
     bool roomChangePending = runner->pendingRoom != -1;
     if (roomChangePending) C3D_skipTopScreenPresent(renderer);
     C3D_endDrawFrame(renderer);
-    if (roomChangePending) C3D_restoreTopScreenOutput(renderer);
     C3D_freePendingSurfaces(renderer);
-    Runner_handlePendingRoomChange(runner);
+    if (roomChangePending) {
+        C3D_FrameBegin(0);
+        C3D_beginDrawFrame(renderer);
+        Runner_handlePendingRoomChange(runner);
+        C3D_endDrawFrame(renderer);
+        C3D_restoreTopScreenOutput(renderer);
+    }
 }
 
 static bool n3ds_appHandleGameChange(N3DSApplication* app, Runner* runner, bool* changed) {
