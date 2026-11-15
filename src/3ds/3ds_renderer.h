@@ -28,6 +28,7 @@ bool C3D_isReady(Renderer* renderer);
 const char* C3D_getStartupError(Renderer* renderer);
 void C3D_beginBottomOverlay(
     Renderer* renderer, int32_t guiW, int32_t guiH, bool clearIfUnused);
+int32_t C3D_getOverlayWidth(const Renderer* renderer);
 void C3D_presentBottomSurface(Renderer* renderer);
 void C3D_endBottomScreenGUI(Renderer* renderer);
 void C3D_clearBottomScreen(Renderer* renderer);

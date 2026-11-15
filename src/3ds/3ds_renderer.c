@@ -6163,6 +6163,11 @@ void C3D_presentBottomSurface(MAYBE_UNUSED Renderer* renderer) {
 #endif
 }
 
+int32_t C3D_getOverlayWidth(const Renderer* renderer) {
+    assert(renderer != NULL);
+    return C3D_secondaryWidth((const N3DSRenderer*)renderer);
+}
+
 void C3D_beginBottomOverlay(MAYBE_UNUSED Renderer* renderer,
     MAYBE_UNUSED int32_t guiW, MAYBE_UNUSED int32_t guiH, MAYBE_UNUSED bool clearIfUnused) {
     assert(renderer != NULL);

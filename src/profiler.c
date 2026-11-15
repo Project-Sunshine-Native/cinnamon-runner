@@ -60,10 +60,12 @@ void Profiler_exit(Profiler* p) {
     if (0 > i) {
         ProfilerStats stats = {0};
         stats.nanos = selfNanos;
+        stats.inclusiveNanos = elapsed;
         stats.ops = selfOps;
         shput(p->entries, f->name, stats);
     } else {
         p->entries[i].value.nanos += selfNanos;
+        p->entries[i].value.inclusiveNanos += elapsed;
         p->entries[i].value.ops += selfOps;
     }
 
@@ -102,8 +104,9 @@ static size_t collectSorted(const Profiler* p, ProfilerEntry* outSorted, size_t 
 
 void Profiler_reset(Profiler* p) {
     if (p == nullptr) return;
-    shfree(p->entries);
-    p->entries = nullptr;
+    for (ptrdiff_t i = 0; i < shlen(p->entries); ++i) {
+        p->entries[i].value = (ProfilerStats){0};
+    }
 }
 
 char* Profiler_createReport(const Profiler* p, int topN, int framesInWindow) {

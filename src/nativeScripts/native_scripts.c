@@ -1,4 +1,5 @@
 #include "native_scripts.h"
+#include "asgore_battle.h"
 #include "generated/generated_native_scripts.h"
 
 void NativeSnowfloorDraw_register(VMContext* ctx);
@@ -10,14 +11,19 @@ void NativeOssafeFillRectangle_register(VMContext* ctx);
 void NativeFinalbarrierDraw_register(VMContext* ctx);
 void NativeOrangeparticleStep_register(VMContext* ctx);
 void NativeSinefireAsghelixStep_register(VMContext* ctx);
+void NativeHelixFiregenAlarm_register(VMContext* ctx);
+void NativeSinefireAsghelixCreate_register(VMContext* ctx);
 void NativeBaseWriterBc16_register(VMContext* ctx);
 void NativeAsgorebBodyDraw_register(VMContext* ctx);
 void NativeAsgorespearDraw_register(VMContext* ctx);
 void NativeAsgorebulparentStep_register(VMContext* ctx);
 void NativeOrangeparticlegenStep_register(VMContext* ctx);
 void NativePurplegradienterDraw_register(VMContext* ctx);
+void NativeSidedFireStep_register(VMContext* ctx);
+void NativeSidedFireDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
+    NativeAsgoreBattle_reset();
     GeneratedNativeScripts_registerAll(ctx);
     NativeBaseWriterBc16_register(ctx);
     NativeSnowfloorDraw_register(ctx);
@@ -29,9 +35,13 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeFinalbarrierDraw_register(ctx);
     NativeOrangeparticleStep_register(ctx);
     NativeSinefireAsghelixStep_register(ctx);
+    NativeHelixFiregenAlarm_register(ctx);
+    NativeSinefireAsghelixCreate_register(ctx);
     NativeAsgorebBodyDraw_register(ctx);
     NativeAsgorespearDraw_register(ctx);
     NativeAsgorebulparentStep_register(ctx);
     NativeOrangeparticlegenStep_register(ctx);
     NativePurplegradienterDraw_register(ctx);
+    NativeSidedFireStep_register(ctx);
+    NativeSidedFireDraw_register(ctx);
 }

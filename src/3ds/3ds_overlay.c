@@ -182,6 +182,9 @@ typedef struct {
 
 static N3DSDebugTinyFontAtlas gN3DSDebugTinyFontAtlas = {0};
 
+#define N3DS_PROFILER_TOP_COUNT 20
+#define N3DS_PROFILER_BOTTOM_COUNT 8
+
 typedef struct {
     bool initialized;
     u64 fpsWindowStartTick;
@@ -194,7 +197,8 @@ typedef struct {
 #ifdef ENABLE_VM_GML_PROFILER
     u64 profilerWindowStartTick;
     uint32_t profilerFrames;
-    char profilerText[512];
+    char profilerText[1536];
+    char profilerBottomText[768];
 #endif
 } N3DSFrameStatsOverlay;
 
@@ -357,28 +361,40 @@ static void n3ds_overlayUpdateProfiler(const N3DSOverlayTimings* timing, const R
     stats->profilerFrames++;
     if (timing->workEndTick - stats->profilerWindowStartTick < SYSCLOCK_ARM11) return;
 
-    const ProfilerEntry* top[5] = {0};
+    const ProfilerEntry* top[N3DS_PROFILER_TOP_COUNT] = {0};
     for (ptrdiff_t i = 0; i < shlen(profiler->entries); ++i) {
         const ProfilerEntry* entry = &profiler->entries[i];
-        if (entry->value.nanos == 0u) continue;
-        for (int j = 0; j < 5; ++j) {
-            if (top[j] != NULL && top[j]->value.nanos >= entry->value.nanos) continue;
-            for (int k = 4; k > j; --k) top[k] = top[k - 1];
+        if (entry->value.inclusiveNanos == 0u) continue;
+        for (int j = 0; j < N3DS_PROFILER_TOP_COUNT; ++j) {
+            if (top[j] != NULL && top[j]->value.inclusiveNanos >= entry->value.inclusiveNanos) continue;
+            for (int k = N3DS_PROFILER_TOP_COUNT - 1; k > j; --k) top[k] = top[k - 1];
             top[j] = entry;
             break;
         }
     }
 
     size_t used = (size_t)snprintf(stats->profilerText, sizeof(stats->profilerText),
-        "evil gml profiler (ms/frame)\n");
-    for (int i = 0; i < 5 && top[i] != NULL; ++i) {
+        "evil gml profiler: total/self ms/frame\n");
+    size_t bottomLength = used;
+    for (int i = 0; i < N3DS_PROFILER_TOP_COUNT && top[i] != NULL; ++i) {
         const char* name = top[i]->key;
         if (strncmp(name, "gml_Object_", 11) == 0 || strncmp(name, "gml_Script_", 11) == 0)
             name += 11;
-        double ms = (double)top[i]->value.nanos / 1000000.0 / stats->profilerFrames;
+        if (strncmp(name, "obj_", 4) == 0) name += 4;
+        char label[25];
+        size_t nameLength = strlen(name);
+        if (nameLength > 24)
+            snprintf(label, sizeof(label), "%.11s~%.12s", name, name + nameLength - 12);
+        else
+            snprintf(label, sizeof(label), "%s", name);
+        double totalMs = (double)top[i]->value.inclusiveNanos / 1000000.0 / stats->profilerFrames;
+        double selfMs = (double)top[i]->value.nanos / 1000000.0 / stats->profilerFrames;
         used += (size_t)snprintf(stats->profilerText + used, sizeof(stats->profilerText) - used,
-            "%6.2f %.42s\n", ms, name);
+            "%6.2f %6.2f %s\n", totalMs, selfMs, label);
+        if (i < N3DS_PROFILER_BOTTOM_COUNT) bottomLength = used;
     }
+    memcpy(stats->profilerBottomText, stats->profilerText, bottomLength);
+    stats->profilerBottomText[bottomLength] = '\0';
     Profiler_reset(profiler);
     stats->profilerFrames = 0u;
 }
@@ -442,6 +458,9 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
 #endif
 
     const N3DSFrameStatsOverlay* stats = &gN3DSFrameStatsOverlay;
+    int32_t overlayWidth = C3D_getOverlayWidth(renderer);
+    bool wideOverlay = overlayWidth > 320;
+    int roomNameLength = wideOverlay ? 18 : 40;
     const Room* room = runner != NULL ? runner->currentRoom : NULL;
     const char* roomName = room != NULL && room->name != NULL ? room->name : "?";
     uint32_t roomSpeed = room != NULL ? room->speed : 0u;
@@ -470,7 +489,7 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
     char text[1024];
     if (bestBucket != UINT32_MAX) {
         snprintf(text, sizeof(text),
-            "Room: %.40s\n"
+            "Room: %.*s\n"
             "FPS: %.1f\n"
             "Tick: %.2fms\n"
             "Step: %.2fms\n"
@@ -483,7 +502,7 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             "  %lux%lu: %lu/%lu\n"
             "Instances: %ld\n"
             "Structs: %ld",
-            roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
+            roomNameLength, roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
             (double)stats->drawMs, (double)stats->audioMs, (unsigned long)trackedAppFreeKb,
             (unsigned long)trackedVramFreeKb, (unsigned long)roomSpeed,
             (unsigned long)residentAtlasPages, (unsigned long)atlasPageCount,
@@ -495,7 +514,7 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             (long)(runner != NULL ? arrlen(runner->structInstances) : 0));
     } else {
         snprintf(text, sizeof(text),
-            "Room: %.40s\n"
+            "Room: %.*s\n"
             "FPS: %.1f\n"
             "Tick: %.2fms\n"
             "Step: %.2fms\n"
@@ -507,7 +526,7 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             "Atlas: %lu/%lu %lu KB\n"
             "Instances: %ld\n"
             "Structs: %ld",
-            roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
+            roomNameLength, roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
             (double)stats->drawMs, (double)stats->audioMs, (unsigned long)trackedAppFreeKb,
             (unsigned long)trackedVramFreeKb, (unsigned long)roomSpeed,
             (unsigned long)residentAtlasPages, (unsigned long)atlasPageCount,
@@ -516,16 +535,18 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             (long)(runner != NULL ? arrlen(runner->structInstances) : 0));
     }
 
-    C3D_beginBottomOverlay(renderer, 320, 240, true);
+    C3D_beginBottomOverlay(renderer, overlayWidth, 240, true);
     n3ds_overlayDrawText(
-        renderer, text, 8.0f, 8.0f, 1.0f, 0.0f, C2D_Color32(255, 255, 255, 255));
+        renderer, text, 8.0f, 8.0f, 1.0f, 0.0f,
+        C2D_Color32(255, 255, 255, 255));
 #ifdef ENABLE_VM_GML_PROFILER
-    const char* profilerText = stats->profilerText[0] != '\0'
-        ? stats->profilerText : "GML/native profiler: collecting...";
+    const char* profilerText = wideOverlay ? stats->profilerText : stats->profilerBottomText;
+    if (profilerText[0] == '\0') profilerText = "evil gml profiler: collecting...";
 #else
-    const char* profilerText = "GML/native profiler disabled in this build";
+    const char* profilerText = "evil gml profiler disabled in this build";
 #endif
-    n3ds_overlayDrawText(renderer, profilerText, 8.0f, 148.0f, 1.0f, 0.0f,
+    n3ds_overlayDrawText(renderer, profilerText, wideOverlay ? 160.0f : 8.0f,
+        wideOverlay ? 8.0f : 148.0f, 1.0f, 0.0f,
         C2D_Color32(255, 255, 255, 255));
     C3D_endBottomScreenGUI(renderer);
 }

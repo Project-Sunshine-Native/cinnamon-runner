@@ -6,12 +6,13 @@
 #include "stdio_compat.h"
 
 // GML script profiler.
-// Tracks self-time (exclusive of nested script calls) and self-instruction-count per code name.
+// Tracks inclusive time, self-time, and self-instruction-count per code name.
 
 #define PROFILER_MAX_DEPTH 256
 
 typedef struct {
     uint64_t nanos; // accumulated self-time in nanoseconds
+    uint64_t inclusiveNanos; // accumulated time including nested script calls
     uint64_t ops;   // accumulated self-count of VM instructions executed
 } ProfilerStats;
 

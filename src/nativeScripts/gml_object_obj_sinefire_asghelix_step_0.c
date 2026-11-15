@@ -1,63 +1,42 @@
 #include "native_runtime.h"
+#include "asgore_battle.h"
 
-#include "collision.h"
 #include "event_table.h"
 #include "instance.h"
 #include "runner.h"
 #include "spatial_grid.h"
 
-#include "stb_ds.h"
+#include <string.h>
 
 static struct {
     const VMContext* owner;
     int32_t s, sv, sf;
 } cache;
-static NativeAssetBinding heartBinding = NATIVE_ASSET_BINDING_INIT;
+static struct {
+    GMLReal phase;
+    GMLReal value;
+    bool valid;
+} sineCache[2];
+static uint32_t nextSine;
 
-static bool collidesWithHeart(Runner* runner, Instance* self, int32_t heartObject) {
-    Instance** hearts = runner->instancesByObject[heartObject];
-    if (arrlen(hearts) == 0) return false;
-
-    InstanceBBox bbox = Collision_computeBBox(runner, self);
-    GMLReal left = bbox.valid ? bbox.left : self->x;
-    GMLReal top = bbox.valid ? bbox.top : self->y;
-    GMLReal right = bbox.valid ? bbox.right : self->x;
-    GMLReal bottom = bbox.valid ? bbox.bottom : self->y;
-    if (runner->collisionCompatibilityMode) {
-        // bbox_right/bottom are inclusive in compatibility mode, unlike the cached box.
-        if (bbox.valid) {
-            right -= 1.0;
-            bottom -= 1.0;
-        }
-        left = GMLReal_bankersRound(left);
-        top = GMLReal_bankersRound(top);
-        right = GMLReal_bankersRound(right);
-        bottom = GMLReal_bankersRound(bottom);
+static GMLReal helixSine(GMLReal phase) {
+    // Mirrored bullet pairs repeat the same two phase inputs across emitters.
+    for (int i = 0; i < 2; ++i) {
+        if (sineCache[i].valid && memcmp(&phase, &sineCache[i].phase, sizeof(phase)) == 0)
+            return sineCache[i].value;
     }
-    if (left > right) {
-        GMLReal temp = left;
-        left = right;
-        right = temp;
-    }
-    if (top > bottom) {
-        GMLReal temp = top;
-        top = bottom;
-        bottom = temp;
-    }
-
-    for (ptrdiff_t i = 0; i < arrlen(hearts); ++i) {
-        Instance* heart = hearts[i];
-        if (!heart->active || heart == self) continue;
-        if (Collision_rectOverlapsInstance(runner, heart, left, top, right, bottom)) return true;
-    }
-    return false;
+    GMLReal value = GMLReal_sin(phase);
+    sineCache[nextSine].phase = phase;
+    sineCache[nextSine].value = value;
+    sineCache[nextSine].valid = true;
+    nextSine ^= 1u;
+    return value;
 }
 
 static bool sinefireAsghelixStep(VMContext* ctx, RValue* outResult) {
     Instance* self = ctx->currentCallFrame->self;
     if (self == nullptr) return false;
-    if (!NativeScript_canResolveAsset(ctx, &heartBinding, "obj_heart")) return false;
-    if ((uint32_t)heartBinding.assetIndex >= ctx->dataWin->objt.count) return false;
+    if (!NativeAsgoreBattle_isActive(ctx)) return false;
     Runner* runner = ctx->runner;
     if (cache.owner != ctx) {
         cache.owner = ctx;
@@ -70,7 +49,7 @@ static bool sinefireAsghelixStep(VMContext* ctx, RValue* outResult) {
     Instance_setSelfVar(self, cache.s, RValue_makeReal(s));
     GMLReal sv = RValue_toReal(Instance_getSelfVar(self, cache.sv));
     GMLReal sf = RValue_toReal(Instance_getSelfVar(self, cache.sf));
-    float x = (float)(self->x + GMLReal_sin(s / sv) * sf);
+    float x = (float)(self->x + helixSine(s / sv) * sf);
     if (x != self->x) {
         self->x = x;
         SpatialGrid_markInstanceAsDirty(runner->spatialGrid, self);
@@ -79,7 +58,7 @@ static bool sinefireAsghelixStep(VMContext* ctx, RValue* outResult) {
     GMLReal roomHeight = runner->currentRoom != nullptr ? (GMLReal)runner->currentRoom->height : -1.0;
     if (self->y > roomHeight + 100.0) Runner_destroyInstance(runner, self, true);
 
-    if (collidesWithHeart(runner, self, heartBinding.assetIndex)) {
+    if (NativeAsgoreBattle_collidesWithHeart(ctx, self)) {
         Runner_executeEventFromObject(runner, self, ctx->currentCallFrame->other,
             self->objectIndex, EVENT_OTHER, OTHER_USER0);
     }
@@ -90,6 +69,8 @@ static bool sinefireAsghelixStep(VMContext* ctx, RValue* outResult) {
 
 void NativeSinefireAsghelixStep_register(VMContext* ctx) {
     cache.owner = nullptr;
-    heartBinding = (NativeAssetBinding)NATIVE_ASSET_BINDING_INIT;
+    sineCache[0].valid = false;
+    sineCache[1].valid = false;
+    nextSine = 0u;
     (void)VM_registerNativeScript(ctx, "gml_Object_obj_sinefire_asghelix_Step_0", sinefireAsghelixStep);
 }
