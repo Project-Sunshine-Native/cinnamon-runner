@@ -5,6 +5,7 @@ void NativeSnowfloorDraw_register(VMContext* ctx);
 void NativePiperSteamDraw_register(VMContext* ctx);
 void NativeSteamplume2Create_register(VMContext* ctx);
 void NativeSteamplume2Step_register(VMContext* ctx);
+void NativeColorcycle_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -12,4 +13,5 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativePiperSteamDraw_register(ctx);
     NativeSteamplume2Create_register(ctx);
     NativeSteamplume2Step_register(ctx);
+    NativeColorcycle_register(ctx);
 }
