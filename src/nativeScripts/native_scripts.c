@@ -1,5 +1,4 @@
 #include "native_scripts.h"
-#include "asgore_battle.h"
 #include "generated/generated_native_scripts.h"
 
 void NativeSnowfloorDraw_register(VMContext* ctx);
@@ -23,7 +22,6 @@ void NativeSidedFireStep_register(VMContext* ctx);
 void NativeSidedFireDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
-    NativeAsgoreBattle_reset();
     GeneratedNativeScripts_registerAll(ctx);
     NativeBaseWriterBc16_register(ctx);
     NativeSnowfloorDraw_register(ctx);

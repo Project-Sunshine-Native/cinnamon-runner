@@ -1,5 +1,4 @@
 #include "native_runtime.h"
-#include "asgore_battle.h"
 
 #include "instance.h"
 #include "renderer.h"
@@ -16,7 +15,7 @@ static struct {
 static bool sidedFireDraw(VMContext* ctx, RValue* outResult) {
     Instance* self = ctx->currentCallFrame->self;
     Renderer* renderer = ctx->runner->renderer;
-    if (self == nullptr || renderer == nullptr || !NativeAsgoreBattle_isActive(ctx)) return false;
+    if (self == nullptr || renderer == nullptr) return false;
     if (!NativeScript_canResolveAsset(ctx, &leftBinding, "obj_lborder") ||
         !NativeScript_canResolveAsset(ctx, &rightBinding, "obj_rborder")) return false;
     Instance* leftBorder = VM_findInstanceByTarget(ctx, leftBinding.assetIndex);

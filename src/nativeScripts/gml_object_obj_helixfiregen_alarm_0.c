@@ -1,5 +1,4 @@
 #include "native_runtime.h"
-#include "asgore_battle.h"
 
 #include "instance.h"
 #include "runner.h"
@@ -53,8 +52,7 @@ static Instance* spawnFire(VMContext* ctx, Instance* self, GMLReal mys,
 }
 
 static bool helixFiregenAlarm(VMContext* ctx, RValue* outResult) {
-    if (!NativeAsgoreBattle_isActive(ctx) ||
-        !NativeScript_canResolveAsset(ctx, &fireBinding, "obj_sinefire_asghelix")) return false;
+    if (!NativeScript_canResolveAsset(ctx, &fireBinding, "obj_sinefire_asghelix")) return false;
 
     Instance* self = ctx->currentCallFrame->self;
     resolveCache(ctx);
