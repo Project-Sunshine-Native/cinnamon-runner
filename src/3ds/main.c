@@ -644,6 +644,7 @@ static void n3ds_appResetFrameState(N3DSApplication* app, bool showDebugMonitor)
     app->frameRate = n3ds_appGetRoomFrameRate(app->session.runner);
     if (app->citroReady) C3D_FrameRate(60.0f);
     app->lastFrameStartTick = 0u;
+    n3ds_overlayReset();
 }
 
 static void n3ds_appBeginFrame(N3DSApplication* app, Runner* runner, N3DSOverlayTimings* timing) {
@@ -763,7 +764,7 @@ static void n3ds_appDrawFrameOverlay(
     N3DSApplication* app, Runner* runner, Renderer* renderer, N3DSOverlayTimings* timing) {
     if (app->debugMonitorVisible) {
         timing->workEndTick = svcGetSystemTick();
-        n3ds_overlayUpdate(timing);
+        n3ds_overlayUpdate(timing, runner);
         n3ds_overlayDraw(renderer, runner);
 #if N3DS_HAS_BOTTOM_TARGET
         if (C3D_bottomScreenUsed(renderer)) app->bottomScreenDisabledNeedsClear = true;
@@ -825,6 +826,9 @@ static bool n3ds_appRunFrame(N3DSApplication* app) {
     N3DSOverlayTimings timing = {0};
     n3ds_appBeginFrame(app, runner, &timing);
     if (!n3ds_appPollFrameInput(app, runner, gen8)) return false;
+#ifdef ENABLE_VM_GML_PROFILER
+    Profiler_setEnabled(&runner->vmContext->profiler, app->debugMonitorVisible);
+#endif
     n3ds_appStepFrame(app, runner, renderer, &timing);
     n3ds_appDrawFrame(app, runner, renderer, gen8, &timing);
     n3ds_appDrawFrameOverlay(app, runner, renderer, &timing);

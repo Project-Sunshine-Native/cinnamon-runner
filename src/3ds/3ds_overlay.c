@@ -3,6 +3,7 @@
 #include "3ds_platform_config.h"
 #include "3ds_renderer.h"
 #include "../runner.h"
+#include "../vm.h"
 #include "../utils.h"
 #include <3ds/allocator/vram.h>
 #include <citro2d.h>
@@ -190,6 +191,11 @@ typedef struct {
     float stepMs;
     float drawMs;
     float audioMs;
+#ifdef ENABLE_VM_GML_PROFILER
+    u64 profilerWindowStartTick;
+    uint32_t profilerFrames;
+    char profilerText[512];
+#endif
 } N3DSFrameStatsOverlay;
 
 static N3DSFrameStatsOverlay gN3DSFrameStatsOverlay = {0};
@@ -342,8 +348,49 @@ void n3ds_overlayReset(void) {
     memset(&gN3DSFrameStatsOverlay, 0, sizeof(gN3DSFrameStatsOverlay));
 }
 
-void n3ds_overlayUpdate(const N3DSOverlayTimings* timing) {
+#ifdef ENABLE_VM_GML_PROFILER
+static void n3ds_overlayUpdateProfiler(const N3DSOverlayTimings* timing, const Runner* runner) {
     N3DSFrameStatsOverlay* stats = &gN3DSFrameStatsOverlay;
+    Profiler* profiler = runner->vmContext->profiler;
+    if (profiler == NULL) return;
+    if (stats->profilerFrames == 0u) stats->profilerWindowStartTick = timing->frameStartTick;
+    stats->profilerFrames++;
+    if (timing->workEndTick - stats->profilerWindowStartTick < SYSCLOCK_ARM11) return;
+
+    const ProfilerEntry* top[5] = {0};
+    for (ptrdiff_t i = 0; i < shlen(profiler->entries); ++i) {
+        const ProfilerEntry* entry = &profiler->entries[i];
+        if (entry->value.nanos == 0u) continue;
+        for (int j = 0; j < 5; ++j) {
+            if (top[j] != NULL && top[j]->value.nanos >= entry->value.nanos) continue;
+            for (int k = 4; k > j; --k) top[k] = top[k - 1];
+            top[j] = entry;
+            break;
+        }
+    }
+
+    size_t used = (size_t)snprintf(stats->profilerText, sizeof(stats->profilerText),
+        "evil gml profiler (ms/frame)\n");
+    for (int i = 0; i < 5 && top[i] != NULL; ++i) {
+        const char* name = top[i]->key;
+        if (strncmp(name, "gml_Object_", 11) == 0 || strncmp(name, "gml_Script_", 11) == 0)
+            name += 11;
+        double ms = (double)top[i]->value.nanos / 1000000.0 / stats->profilerFrames;
+        used += (size_t)snprintf(stats->profilerText + used, sizeof(stats->profilerText) - used,
+            "%6.2f %.42s\n", ms, name);
+    }
+    Profiler_reset(profiler);
+    stats->profilerFrames = 0u;
+}
+#endif
+
+void n3ds_overlayUpdate(const N3DSOverlayTimings* timing, const Runner* runner) {
+    N3DSFrameStatsOverlay* stats = &gN3DSFrameStatsOverlay;
+#ifdef ENABLE_VM_GML_PROFILER
+    n3ds_overlayUpdateProfiler(timing, runner);
+#else
+    (void)runner;
+#endif
     if (!stats->initialized) {
         stats->initialized = true;
         stats->fpsWindowStartTick = timing->frameStartTick;
@@ -472,5 +519,13 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
     C3D_beginBottomOverlay(renderer, 320, 240, true);
     n3ds_overlayDrawText(
         renderer, text, 8.0f, 8.0f, 1.0f, 0.0f, C2D_Color32(255, 255, 255, 255));
+#ifdef ENABLE_VM_GML_PROFILER
+    const char* profilerText = stats->profilerText[0] != '\0'
+        ? stats->profilerText : "GML/native profiler: collecting...";
+#else
+    const char* profilerText = "GML/native profiler disabled in this build";
+#endif
+    n3ds_overlayDrawText(renderer, profilerText, 8.0f, 148.0f, 1.0f, 0.0f,
+        C2D_Color32(255, 255, 255, 255));
     C3D_endBottomScreenGUI(renderer);
 }

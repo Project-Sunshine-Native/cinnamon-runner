@@ -1154,6 +1154,11 @@ elseif(PLATFORM STREQUAL "3ds")
     target_sources(butterscotch PRIVATE src/image/image_decoder.c)
     add_compile_definitions(PLATFORM_3DS USE_FLOAT_REALS NO_RVALUE_INT64)
 
+    option(ENABLE_VM_GML_PROFILER "Enable Butterscotch VM/interpreter profiler" ON)
+    if(ENABLE_VM_GML_PROFILER)
+        target_compile_definitions(butterscotch PRIVATE ENABLE_VM_GML_PROFILER)
+    endif()
+
     option(APPSURFACE-HALF "Render the 3DS application surface at half resolution (640x480 to 320x240)" OFF)
     if(APPSURFACE-HALF)
         target_compile_definitions(butterscotch PRIVATE APPSURFACE_HALF=1)
