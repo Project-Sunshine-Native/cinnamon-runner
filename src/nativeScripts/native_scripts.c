@@ -6,6 +6,8 @@ void NativePiperSteamDraw_register(VMContext* ctx);
 void NativeSteamplume2Create_register(VMContext* ctx);
 void NativeSteamplume2Step_register(VMContext* ctx);
 void NativeColorcycle_register(VMContext* ctx);
+void NativeOssafeFillRectangle_register(VMContext* ctx);
+void NativeFinalbarrierDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -14,4 +16,6 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeSteamplume2Create_register(ctx);
     NativeSteamplume2Step_register(ctx);
     NativeColorcycle_register(ctx);
+    NativeOssafeFillRectangle_register(ctx);
+    NativeFinalbarrierDraw_register(ctx);
 }
