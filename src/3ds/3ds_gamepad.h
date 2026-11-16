@@ -5,6 +5,6 @@
 
 #include <3ds.h>
 
-void n3ds_padSyncPrimary(RunnerGamepadState* gamepads, u32 held, circlePosition circle);
+void n3ds_padSyncPrimary(RunnerGamepadState* gamepads, u32 held, circlePosition circle, circlePosition cstick);
 
 #endif

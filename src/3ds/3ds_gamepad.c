@@ -20,7 +20,7 @@ static void n3ds_syncGamepadButton(GamepadSlot* slot, int buttonIndex, bool held
     slot->buttonValue[buttonIndex] = held ? value : 0.0f;
 }
 
-void n3ds_padSyncPrimary(RunnerGamepadState* gamepads, u32 held, circlePosition circle) {
+void n3ds_padSyncPrimary(RunnerGamepadState* gamepads, u32 held, circlePosition circle, circlePosition cstick) {
     if (gamepads == NULL) return;
 
     GamepadSlot* slot = &gamepads->slots[0];
@@ -35,8 +35,9 @@ void n3ds_padSyncPrimary(RunnerGamepadState* gamepads, u32 held, circlePosition 
     float axisLV = -n3ds_normalizeCircleAxis(circle.dy);
     slot->axisValue[0] = axisLH;
     slot->axisValue[1] = axisLV;
-    slot->axisValue[2] = 0.0f;
-    slot->axisValue[3] = 0.0f;
+    //managed to forget about the c-stick this entire time oopsy!
+    slot->axisValue[2] = n3ds_normalizeCircleAxis(cstick.dx);
+    slot->axisValue[3] = -n3ds_normalizeCircleAxis(cstick.dy);
 
     n3ds_syncGamepadButton(slot, 0, (held & KEY_A) != 0, 1.0f);
     n3ds_syncGamepadButton(slot, 1, (held & KEY_B) != 0, 1.0f);

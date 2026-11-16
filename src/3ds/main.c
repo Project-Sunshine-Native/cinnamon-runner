@@ -755,12 +755,14 @@ static bool n3ds_appPollFrameInput(N3DSApplication* app, Runner* runner, const G
 
     circlePosition circle;
     hidCircleRead(&circle);
+    circlePosition cstick;
+    hidCstickRead(&cstick);
     int32_t gameW = 0;
     int32_t gameH = 0;
     n3ds_appGetAppSize(runner, gen8, &gameW, &gameH);
     n3ds_appSyncTouchMouse(&app->touchMouse, runner, gameW, gameH, held);
     if (app->settings.gamepadApiEnabled) {
-        n3ds_padSyncPrimary(runner->gamepads, held, circle);
+        n3ds_padSyncPrimary(runner->gamepads, held, circle, cstick);
     } else {
         if (runner->gamepads != NULL) RunnerGamepad_beginFrame(runner->gamepads);
         n3ds_appSyncMappedKeyboard(runner, app->keyboardHeld, held, &app->settings);
