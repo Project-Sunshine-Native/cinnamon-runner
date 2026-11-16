@@ -3103,29 +3103,33 @@ static bool C3D_isNativeScreenOverride(
     return true;
 }
 
-static void C3D_floorSpritePosition(N3DSRenderer* renderer, float left,
+static void C3D_snapSpritePosition(N3DSRenderer* renderer, float left,
     float top, float* x, float* y) {
-    if (renderer->base.texFilter || !renderer->halfResApplicationSurface ||
-        renderer->currentTargetSurfaceId != renderer->applicationSurfaceId ||
-        renderer->customCameraTransformActive || renderer->screenTransformActive ||
+    if (renderer->base.texFilter) return;
+    bool snapInViewport =
+        (renderer->halfResApplicationSurface &&
+            renderer->currentTargetSurfaceId == renderer->applicationSurfaceId) ||
+        (renderer->bottomSurfaceId >= 0 &&
+            renderer->currentTargetSurfaceId == renderer->bottomSurfaceId);
+    if (!snapInViewport || renderer->customCameraTransformActive || renderer->screenTransformActive ||
         renderer->currentViewAngle != 0.0f || renderer->currentViewW <= 0 ||
         renderer->currentViewH <= 0 || renderer->base.CPortW <= 0 || renderer->base.CPortH <= 0) {
-        *x = floorf(*x);
-        *y = floorf(*y);
+        *x = (float)(int32_t)*x;
+        *y = (float)(int32_t)*y;
         return;
     }
     float scaleX = (float)renderer->base.CPortW / (float)renderer->currentViewW;
     float scaleY = (float)renderer->base.CPortH / (float)renderer->currentViewH;
     float screenX = (*x + left - (float)renderer->currentViewX) * scaleX;
     float screenY = (*y + top - (float)renderer->currentViewY) * scaleY;
-    *x += (floorf(screenX) - screenX) / scaleX;
-    *y += (floorf(screenY) - screenY) / scaleY;
+    *x += ((float)(int32_t)screenX - screenX) / scaleX;
+    *y += ((float)(int32_t)screenY - screenY) / scaleY;
 }
 
-static bool C3D_shouldFloorSprite(float xscale, float yscale, float angleDeg) {
+static bool C3D_shouldSnapSprite(float xscale, float yscale, float angleDeg) {
     float scale = fabsf(xscale);
     return fabsf(angleDeg) <= 0.0001f && scale >= 1.0f &&
-        scale == fabsf(yscale) && scale == floorf(scale);
+        scale == fabsf(yscale) && scale == (float)(int32_t)scale;
 }
 
 static void C3D_drawSprite(Renderer* base, int32_t tpagIndex, float x, float y,
@@ -3167,8 +3171,8 @@ static void C3D_drawSprite(Renderer* base, int32_t tpagIndex, float x, float y,
     if (xscale == 0.0f || yscale == 0.0f) return;
     float left = ((float)tpag->targetX - originX) * xscale;
     float top = ((float)tpag->targetY - originY) * yscale;
-    if (C3D_shouldFloorSprite(xscale, yscale, angleDeg)) {
-        C3D_floorSpritePosition(renderer, left, top, &x, &y);
+    if (C3D_shouldSnapSprite(xscale, yscale, angleDeg)) {
+        C3D_snapSpritePosition(renderer, left, top, &x, &y);
     }
     N3DSDrawMapper mapper;
     C3D_mapInitSprite(&mapper, x, y, 1.0f, 1.0f, angleDeg);
@@ -3220,8 +3224,8 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
     }
     if (xscale == 0.0f || yscale == 0.0f) return;
     N3DSDrawMapper mapper;
-    if (C3D_shouldFloorSprite(xscale, yscale, angleDeg)) {
-        C3D_floorSpritePosition(renderer, 0.0f, 0.0f, &x, &y);
+    if (C3D_shouldSnapSprite(xscale, yscale, angleDeg)) {
+        C3D_snapSpritePosition(renderer, 0.0f, 0.0f, &x, &y);
     }
     C3D_mapInitPart(&mapper, srcW, srcH, x, y, xscale, yscale, angleDeg, pivotX, pivotY);
     float dstLeft = 0.0f;
@@ -3568,7 +3572,7 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
     if (!renderer->base.texFilter && mapper->kind == N3DS_MAP_AXIS &&
         fabsf(mapper->axisScaleX) == 1.0f && fabsf(mapper->axisScaleY) == 1.0f) {
         alignedMapper = *mapper;
-        C3D_floorSpritePosition(renderer, left * mapper->axisScaleX,
+        C3D_snapSpritePosition(renderer, left * mapper->axisScaleX,
             top * mapper->axisScaleY, &alignedMapper.axisX, &alignedMapper.axisY);
         mapper = &alignedMapper;
     }
