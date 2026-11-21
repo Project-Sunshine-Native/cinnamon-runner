@@ -56,6 +56,9 @@ void NativeFloweyLefteyeDraw_register(VMContext* ctx);
 void NativeFloweyFlipeyeDraw_register(VMContext* ctx);
 void NativeFloweyMouthDraw_register(VMContext* ctx);
 void NativeFloweyTvDraw_register(VMContext* ctx);
+void NativeConveyorParentDraw_register(VMContext* ctx);
+void NativeTrueLavawaverDraw_register(VMContext* ctx);
+void NativeTrueAntiwaverDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -114,4 +117,7 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeFloweyFlipeyeDraw_register(ctx);
     NativeFloweyMouthDraw_register(ctx);
     NativeFloweyTvDraw_register(ctx);
+    NativeConveyorParentDraw_register(ctx);
+    NativeTrueLavawaverDraw_register(ctx);
+    NativeTrueAntiwaverDraw_register(ctx);
 }

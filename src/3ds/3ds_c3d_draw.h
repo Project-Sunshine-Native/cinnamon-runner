@@ -97,6 +97,8 @@ void n3ds_c3dSetColorMask(N3DSC3DDrawContext* ctx, bool red, bool green, bool bl
 void n3ds_c3dFlush(N3DSC3DDrawContext* ctx);
 void n3ds_c3dInvalidateTexture(N3DSC3DDrawContext* ctx, C3D_Tex* tex);
 void n3ds_c3dFrameSplit(N3DSC3DDrawContext* ctx);
+N3DSC3DVertex* n3ds_c3dBeginQuads(
+    N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t quadCount);
 N3DSC3DVertex* n3ds_c3dBeginVertices(
     N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t vertexCount);
 void n3ds_c3dCommitVertices(N3DSC3DDrawContext* ctx, uint32_t vertexCount);

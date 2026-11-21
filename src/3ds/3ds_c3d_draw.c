@@ -440,6 +440,14 @@ void n3ds_c3dFrameSplit(N3DSC3DDrawContext* ctx) {
     C3D_FrameSplit(GX_CMDLIST_FLUSH);
 }
 
+N3DSC3DVertex* n3ds_c3dBeginQuads(
+    N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t quadCount) {
+    if (quadCount == 0u || quadCount > UINT32_MAX / 4u) return NULL;
+    if (!n3ds_c3dReserve(ctx, tex, quadCount * 4u, true, ctx != NULL && ctx->texFilter))
+        return NULL;
+    return &ctx->vertices[ctx->vertexCount];
+}
+
 N3DSC3DVertex* n3ds_c3dBeginVertices(
     N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t vertexCount) {
     if (vertexCount == 0u) return NULL;

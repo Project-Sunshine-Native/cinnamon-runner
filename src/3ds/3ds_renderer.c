@@ -3340,6 +3340,96 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
         rgba);
 }
 
+bool C3D_drawTrueLavaWave(Renderer* base, int32_t tpagIndex, float srcLeft,
+    float srcWidth, float xOffset, GMLReal baseY, const GMLReal waveX[20], float alpha) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    N3DSAtlasItem* item = NULL;
+    if (renderer->screenTransformActive ||
+        C3D_isNativeScreenOverride(renderer, tpagIndex, NULL) ||
+        !C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item) ||
+        item->fragmentCount != 1u || item->fragmentStart >= renderer->atlas.fragmentCount)
+        return false;
+
+    TexturePageItem* tpag = &base->dataWin->tpag.items[tpagIndex];
+    N3DSAtlasFragment* fragment = &renderer->atlas.fragments[item->fragmentStart];
+    if (fragment->sourceX != 0 || fragment->sourceY != 0 ||
+        fragment->width < tpag->sourceWidth || fragment->height < tpag->sourceHeight ||
+        fragment->pageIndex >= renderer->atlas.pageCount)
+        return false;
+
+    if (srcWidth <= 0.0f || alpha <= 0.0f) return true;
+    if (!C3D_loadRoomWantedAtlasPage(renderer, fragment->pageIndex, NULL)) return true;
+    N3DSAtlasPage* page = &renderer->atlas.pages[fragment->pageIndex];
+    N3DSUVRect region;
+    C3D_getAtlasFragmentRegion(item, fragment, page, &region);
+
+    N3DSC3DVertex* vertices = n3ds_c3dBeginQuads(&renderer->drawContext, &page->tex, 640u);
+    if (vertices == NULL) return false;
+
+    uint32_t rgba = C3D_makeColor(0xFFFFFFu, alpha);
+    uint8_t red = (uint8_t)rgba;
+    uint8_t green = (uint8_t)(rgba >> 8);
+    uint8_t blue = (uint8_t)(rgba >> 16);
+    uint8_t opacity = (uint8_t)(rgba >> 24);
+    uint32_t quadCount = 0u;
+
+    for (int32_t i = 0; i < 20; ++i) {
+        float srcTop = (float)(i * 2);
+        float srcHeight = 2.0f;
+        float yOffset = 0.0f;
+        if (tpag->targetY > srcTop) {
+            yOffset = tpag->targetY - srcTop;
+            srcHeight -= yOffset;
+            srcTop = 0.0f;
+        } else {
+            srcTop -= tpag->targetY;
+        }
+        if (srcHeight > tpag->sourceHeight - srcTop)
+            srcHeight = tpag->sourceHeight - srcTop;
+        if (srcHeight <= 0.0f) continue;
+
+        N3DSUVRect stripRegion;
+        C3D_uvSubRect(&stripRegion, &region,
+            srcLeft, srcTop, srcLeft + srcWidth, srcTop + srcHeight);
+
+        float drawX[4];
+        float drawY[8];
+        for (int32_t g = 0; g < 4; ++g) {
+            drawX[g] = (float)(waveX[i] + (GMLReal)g * 100.0) + xOffset;
+            float unusedY = 0.0f;
+            C3D_floorSpritePosition(renderer, 0.0f, 0.0f, &drawX[g], &unusedY);
+        }
+        for (int32_t f = 0; f < 8; ++f) {
+            drawY[f] = (float)(baseY + (GMLReal)(i * 2 + f * 40)) + yOffset;
+            float unusedX = 0.0f;
+            C3D_floorSpritePosition(renderer, 0.0f, 0.0f, &unusedX, &drawY[f]);
+        }
+
+        for (int32_t g = 0; g < 4; ++g) {
+            float x0 = drawX[g];
+            float x1 = x0 + srcWidth;
+            for (int32_t f = 0; f < 8; ++f) {
+                float y0 = drawY[f];
+                float y1 = y0 + srcHeight;
+                if (!C3D_axisRectVisible(renderer, x0, y0, x1, y1)) continue;
+
+                N3DSC3DVertex* quad = &vertices[quadCount * 4u];
+                quad[0] = (N3DSC3DVertex){x0, y0, stripRegion.left, stripRegion.top,
+                    red, green, blue, opacity};
+                quad[1] = (N3DSC3DVertex){x1, y0, stripRegion.right, stripRegion.top,
+                    red, green, blue, opacity};
+                quad[2] = (N3DSC3DVertex){x0, y1, stripRegion.left, stripRegion.bottom,
+                    red, green, blue, opacity};
+                quad[3] = (N3DSC3DVertex){x1, y1, stripRegion.right, stripRegion.bottom,
+                    red, green, blue, opacity};
+                ++quadCount;
+            }
+        }
+    }
+    n3ds_c3dCommitVertices(&renderer->drawContext, quadCount * 4u);
+    return true;
+}
+
 static void C3D_drawSpritePos(Renderer* base, int32_t tpagIndex, float x1, float y1,
     float x2, float y2, float x3, float y3, float x4, float y4, float alpha) {
     assert(base != NULL);

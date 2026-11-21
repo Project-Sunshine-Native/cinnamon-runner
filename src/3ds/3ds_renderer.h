@@ -8,6 +8,8 @@
 #include "3ds_settings.h"
 
 Renderer* C3D_create(const N3DSRunnerSettings* settings);
+bool C3D_drawTrueLavaWave(Renderer* renderer, int32_t tpagIndex, float srcLeft,
+    float srcWidth, float xOffset, GMLReal baseY, const GMLReal waveX[20], float alpha);
 void C3D_beginDrawFrame(Renderer* renderer);
 void C3D_endDrawFrame(Renderer* renderer);
 N3DSC3DVertex* C3D_beginVertices(
