@@ -7,4 +7,12 @@ typedef struct VMContext VMContext;
 // which keeps this safe for games that don't have native script compilations
 void NativeScripts_registerAll(VMContext* ctx);
 
+#ifdef PLATFORM_3DS
+#include <stdbool.h>
+#include <stdint.h>
+
+struct Runner;
+bool NativeBattleback_getOpaqueDepth(struct Runner* runner, int32_t* depth);
+#endif
+
 #endif /* _CINNAMON_NATIVE_SCRIPTS_H_ */

@@ -3992,6 +3992,36 @@ static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, in
     }
 }
 
+void C3D_drawGlyphGlowRun(Renderer* base, const RendererGlyph* glyphs, int32_t count,
+    const float alpha[3]) {
+    DataWin* dataWin = base->dataWin;
+    int32_t fontIndex = base->drawFont;
+    if (count <= 0 || fontIndex < 0 || (uint32_t)fontIndex >= dataWin->font.count) return;
+
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    Font* font = &dataWin->font.fonts[fontIndex];
+    N3DSFontState state;
+    if (!C3D_resolveFontState(renderer, dataWin, font, &state)) return;
+    float cursorY = -(float)font->ascenderOffset;
+
+    for (int32_t i = 0; i < count; ++i, glyphs += 9) {
+        FontGlyph* glyph = TextUtils_findGlyph(font, glyphs->character);
+        if (glyph == NULL) continue;
+        uint32_t rgba[] = {
+            C3D_makeColor(glyphs->color, alpha[0]),
+            C3D_makeColor(glyphs->color, alpha[1]),
+            C3D_makeColor(glyphs->color, alpha[2]),
+        };
+        for (int32_t pass = 0; pass < 9; ++pass) {
+            int32_t group = pass == 0 ? 0 : pass <= 4 ? 1 : 2;
+            if (alpha[group] <= 0.0f) continue;
+            N3DSDrawMapper mapper;
+            C3D_mapInitAxis(&mapper, glyphs[pass].x, glyphs[pass].y, font->scaleX, font->scaleY);
+            (void)C3D_drawGlyph(renderer, dataWin, &state, glyph, 0.0f, cursorY, &mapper, rgba[group]);
+        }
+    }
+}
+
 static void C3D_drawTextColor(Renderer* base, const char* text, float x, float y,
     float xscale, float yscale, float angleDeg, int32_t c1, MAYBE_UNUSED int32_t c2,
     MAYBE_UNUSED int32_t c3, MAYBE_UNUSED int32_t c4, float alpha, float lineSeparation) {

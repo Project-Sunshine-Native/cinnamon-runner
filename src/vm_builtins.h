@@ -292,5 +292,6 @@ bool VMBuiltins_isInstanceScopedBuiltinVar(int16_t builtinVarId);
 void VMBuiltins_checkIfBuiltinVarTableIsSorted(void);
 RValue VMBuiltins_getVariable(VMContext* ctx, Instance* inst, int16_t builtinVarId, const char* name, int32_t arrayIndex);
 void VMBuiltins_setVariable(VMContext* ctx, Instance* inst, int16_t builtinVarId, const char* name, RValue val, int32_t arrayIndex);
+bool VMBuiltins_placeMeeting(struct Runner* runner, Instance* caller, GMLReal testX, GMLReal testY, int32_t target);
 
 #endif /* _BS_VM_BUILTINS_H_ */

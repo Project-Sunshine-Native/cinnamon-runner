@@ -13954,19 +13954,7 @@ static RValue builtin_display_set_gui_maximise(VMContext* ctx, MAYBE_UNUSED RVal
     return RValue_makeUndefined();
 }
 
-// place_meeting(x, y, obj) - returns true if the calling instance would collide with obj at position (x, y)
-static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("place_meeting", 3, RValue_makeBool(false));
-
-    Runner* runner = ctx->runner;
-    Instance* caller = ctx->currentCallFrame->self;
-    if (caller == nullptr) return RValue_makeBool(false);
-
-    GMLReal testX = RValue_toReal(args[0]);
-    GMLReal testY = RValue_toReal(args[1]);
-    int32_t target = VM_resolveInstanceTarget(ctx, RValue_toInt32(args[2]));
-    if (target == INSTANCE_NOONE) return RValue_makeBool(false);
-
+bool VMBuiltins_placeMeeting(Runner* runner, Instance* caller, GMLReal testX, GMLReal testY, int32_t target) {
     // ALWAYS SYNC THE GRID BEFORE CHANGING THE INSTANCE POSITION TO AVOID "SYNCING" THE TEST POSITION!
     SpatialGrid_syncGrid(runner, runner->spatialGrid);
 
@@ -14011,7 +13999,20 @@ static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCou
     caller->x = savedX;
     caller->y = savedY;
 
-    return RValue_makeBool(found);
+    return found;
+}
+
+// place_meeting(x, y, obj) - returns true if the calling instance would collide with obj at position (x, y)
+static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("place_meeting", 3, RValue_makeBool(false));
+
+    Instance* caller = ctx->currentCallFrame->self;
+    if (caller == nullptr) return RValue_makeBool(false);
+
+    int32_t target = VM_resolveInstanceTarget(ctx, RValue_toInt32(args[2]));
+    if (target == INSTANCE_NOONE) return RValue_makeBool(false);
+    return RValue_makeBool(VMBuiltins_placeMeeting(ctx->runner, caller,
+        RValue_toReal(args[0]), RValue_toReal(args[1]), target));
 }
 
 // GameMaker rounds the coordinates when in collision compatibility mode

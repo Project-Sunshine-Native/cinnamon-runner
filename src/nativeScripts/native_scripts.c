@@ -1,5 +1,8 @@
 #include "native_scripts.h"
 #include "UNDERTALE/generated_native_scripts.h"
+#include "vm.h"
+
+#include <string.h>
 
 void NativeSnowfloorDraw_register(VMContext* ctx);
 void NativePiperSteamDraw_register(VMContext* ctx);
@@ -67,8 +70,20 @@ void NativeBrightwaterfallDraw_register(VMContext* ctx);
 void NativeGlowparticle1Step_register(VMContext* ctx);
 void NativeRoundedgeDraw_register(VMContext* ctx);
 void NativePurplegrassDraw_register(VMContext* ctx);
+void NativeBattlecontrollerDraw_register(VMContext* ctx);
+void NativeWriterDraw_register(VMContext* ctx);
+void NativeCharbox_register(VMContext* ctx);
+void NativeBattlebackDraw_register(VMContext* ctx);
+void NativeSelectionMatrix_register(VMContext* ctx);
+void NativeMaincharaEndStep_register(VMContext* ctx);
+void NativeTimeBeginStep_register(VMContext* ctx);
+void NativeRegularBulletStep_register(VMContext* ctx);
+void NativeHeartStep_register(VMContext* ctx);
+void NativeDarkcontrollerDraw_register(VMContext* ctx);
+void NativeCaterpillarEndStep_register(VMContext* ctx);
+void NativeDeviceChoiceDraw_register(VMContext* ctx);
 
-void NativeScripts_registerAll(VMContext* ctx) {
+static void registerUndertale(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
     NativeBaseWriterBc16_register(ctx);
     NativeSnowfloorDraw_register(ctx);
@@ -135,5 +150,31 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeBrightwaterfallDraw_register(ctx);
     NativeGlowparticle1Step_register(ctx);
     NativeRoundedgeDraw_register(ctx);
+}
+
+static void registerDeltaruneChapter1(VMContext* ctx) {
     NativePurplegrassDraw_register(ctx);
+    NativeBattlecontrollerDraw_register(ctx);
+    NativeWriterDraw_register(ctx);
+    NativeCharbox_register(ctx);
+    NativeBattlebackDraw_register(ctx);
+    NativeSelectionMatrix_register(ctx);
+    NativeMaincharaEndStep_register(ctx);
+    NativeTimeBeginStep_register(ctx);
+    NativeRegularBulletStep_register(ctx);
+    NativeHeartStep_register(ctx);
+    NativeDarkcontrollerDraw_register(ctx);
+    NativeCaterpillarEndStep_register(ctx);
+    NativeDeviceChoiceDraw_register(ctx);
+}
+
+// We dont want the scripts running on a different completely unrelated game, so we'll check to see if the name here matches the games GEN8 name
+void NativeScripts_registerAll(VMContext* ctx) {
+    const char* title = ctx->dataWin->gen8.displayName;
+    if (title == nullptr) return;
+    if (strcmp(title, "UNDERTALE") == 0) {
+        registerUndertale(ctx);
+    } else if (strcmp(title, "DELTARUNE Chapter 1") == 0) {
+        registerDeltaruneChapter1(ctx);
+    }
 }

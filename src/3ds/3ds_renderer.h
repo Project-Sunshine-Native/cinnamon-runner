@@ -12,6 +12,8 @@ bool C3D_drawTrueLavaWave(Renderer* renderer, int32_t tpagIndex, float srcLeft,
     float srcWidth, float xOffset, GMLReal baseY, const GMLReal waveX[20], float alpha);
 bool C3D_drawRoundEdge(Renderer* renderer, int32_t tpagIndex, GMLReal imageX,
     GMLReal partWidth, GMLReal roomWidth, uint32_t color, float alpha);
+void C3D_drawGlyphGlowRun(Renderer* renderer, const RendererGlyph* glyphs, int32_t count,
+    const float alpha[3]);
 void C3D_beginDrawFrame(Renderer* renderer);
 void C3D_endDrawFrame(Renderer* renderer);
 N3DSC3DVertex* C3D_beginVertices(

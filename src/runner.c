@@ -12,6 +12,7 @@
 #include "fmod/fmod.h"
 #ifdef PLATFORM_3DS
 #include "3ds/3ds_renderer.h"
+#include "nativeScripts/native_scripts.h"
 #endif
 
 #include <stdint.h>
@@ -938,15 +939,19 @@ static void rebuildDrawableCacheIfDirty(Runner* runner) {
     }
 }
 
-void Runner_drawInstance(Runner* runner, Instance* inst) {
+static void drawInstance(Runner* runner, Instance* inst, bool hideDefaultDraw) {
     if (runner->drawEnabled) {
         int32_t ownerObjectIndex = -1;
         int32_t codeId = findEventCodeIdAndOwner(runner, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, &ownerObjectIndex);
         if (codeId >= 0)
             Runner_executeResolvedEvent(runner, inst, nullptr, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
-        else if (runner->renderer != nullptr)
+        else if (!hideDefaultDraw && runner->renderer != nullptr)
             Renderer_drawSelf(runner->renderer, inst);
     }
+}
+
+void Runner_drawInstance(Runner* runner, Instance* inst) {
+    drawInstance(runner, inst, false);
 }
 
 void Runner_draw(Runner* runner) {
@@ -960,6 +965,11 @@ void Runner_draw(Runner* runner) {
         drawGMS1Backgrounds(runner, false);
 
     fireDrawSubtype(runner, runner->cachedDrawables, drawableCount, DRAW_BEGIN);
+
+    int32_t opaqueDepth = INT32_MAX;
+#ifdef PLATFORM_3DS
+    NativeBattleback_getOpaqueDepth(runner, &opaqueDepth);
+#endif
 
     // Draw interleaved tiles and instances
     int32_t i = 0;
@@ -1058,7 +1068,7 @@ void Runner_draw(Runner* runner) {
             if (!inst->active || !inst->visible || inst->sequenceControlled) continue;
 
             int32_t previousShader = Runner_pushLayerShader(runner, inst->layer);
-            Runner_drawInstance(runner, inst);
+            drawInstance(runner, inst, d->depth > opaqueDepth);
             Runner_popLayerShader(runner, previousShader);
         } else if (d->type == DRAWABLE_PARTICLE_SYSTEM) {
             // Filtered at draw time, like instance visibility: part_system_automatic_draw can be
@@ -1068,8 +1078,24 @@ void Runner_draw(Runner* runner) {
             Particles_drawSystem(runner, d->particleSystemId);
         } else if (d->type == DRAWABLE_LAYER) {
             // Re-resolve every iteration: a previous instance's Draw event may have called layer_create/layer_destroy and reallocated runner->runtimeLayers.
-            RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, d->runtimeLayerId);
+            int32_t layerId = d->runtimeLayerId;
+            RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, layerId);
             if (runtimeLayer == nullptr || !runtimeLayer->visible) continue;
+            // Only suppress engine-owned drawing; a custom Draw may still update game state.
+            bool covered = d->depth > opaqueDepth && runtimeLayer->shaderIndex == -1 &&
+                runtimeLayer->beginScript < 0 && runtimeLayer->endScript < 0;
+            if (covered) {
+                bool hasInstancesOrSequences = false;
+                for (size_t j = 0; j < arrlenu(runtimeLayer->elements); ++j) {
+                    RuntimeLayerElement* el = &runtimeLayer->elements[j];
+                    if (el->type == RuntimeLayerElementType_Instance ||
+                        (el->type == RuntimeLayerElementType_Sequence && el->visible)) {
+                        hasInstancesOrSequences = true;
+                        break;
+                    }
+                }
+                if (!hasInstancesOrSequences) continue;
+            }
             int32_t previousShader = Runner_pushLayerShader(runner, (int32_t) runtimeLayer->id);
             VMContext* ctx = runner->vmContext;
 
@@ -1087,7 +1113,7 @@ void Runner_draw(Runner* runner) {
                 );
             }
 
-            runtimeLayer = Runner_findRuntimeLayerById(runner, d->runtimeLayerId);
+            runtimeLayer = Runner_findRuntimeLayerById(runner, layerId);
             if (runtimeLayer == nullptr) {
                 Runner_popLayerShader(runner, previousShader);
                 continue;
@@ -1097,15 +1123,14 @@ void Runner_draw(Runner* runner) {
 
             size_t instanceElementCount = arrlenu(runtimeLayer->elements);
             repeat(instanceElementCount, j) {
-                runtimeLayer = Runner_findRuntimeLayerById(runner, d->runtimeLayerId);
                 if (runtimeLayer == nullptr || (size_t) j >= arrlenu(runtimeLayer->elements)) break;
                 RuntimeLayerElement* el = &runtimeLayer->elements[j];
                 if (el->type != RuntimeLayerElementType_Instance) continue;
                 Instance* inst = hmget(runner->instancesById, el->instanceId);
                 if (inst == nullptr || !inst->active || !inst->visible || inst->destroyed || inst->sequenceControlled) continue;
-                Runner_drawInstance(runner, inst);
+                drawInstance(runner, inst, covered);
+                runtimeLayer = Runner_findRuntimeLayerById(runner, layerId);
             }
-            runtimeLayer = Runner_findRuntimeLayerById(runner, d->runtimeLayerId);
             if (runtimeLayer == nullptr) {
                 Runner_popLayerShader(runner, previousShader);
                 continue;
@@ -1117,11 +1142,15 @@ void Runner_draw(Runner* runner) {
                 float roomH = (float) runner->currentRoom->height;
                 size_t elementCount = arrlenu(runtimeLayer->elements);
                 repeat(elementCount, j) {
-                    runtimeLayer = Runner_findRuntimeLayerById(runner, d->runtimeLayerId);
                     if (runtimeLayer == nullptr || (size_t)j >= arrlenu(runtimeLayer->elements)) break;
                     RuntimeLayerElement* layerElement = &runtimeLayer->elements[j];
                     if (layerElement->type == RuntimeLayerElementType_Sequence) {
-                        if (layerElement->visible) Sequence_draw(layerElement->sequenceElement);
+                        if (layerElement->visible) {
+                            Sequence_draw(layerElement->sequenceElement);
+                            runtimeLayer = Runner_findRuntimeLayerById(runner, layerId);
+                        }
+                    } else if (covered) {
+                        continue;
                     } else if (layerElement->type == RuntimeLayerElementType_Background && layerElement->backgroundElement != nullptr) {
                         renderBackgroundElement(runner, layerElement->backgroundElement, roomW, roomH, layerOffsetX, layerOffsetY);
                     } else if (layerElement->type == RuntimeLayerElementType_Tile && layerElement->tileElement != nullptr && layerElement->tileElementOwned) {
@@ -1132,31 +1161,32 @@ void Runner_draw(Runner* runner) {
                     }
                 }
             }
+            if (runtimeLayer == nullptr) {
+                Runner_popLayerShader(runner, previousShader);
+                continue;
+            }
 
             // Everything after this point is static/parsed layers from the Room itself
-            RoomLayer* parsedLayer = Runner_findRoomLayerById(runner->currentRoom, (int32_t) runtimeLayer->id);
+            RoomLayer* parsedLayer = covered ? nullptr : Runner_findRoomLayerById(runner->currentRoom, (int32_t) runtimeLayer->id);
             if (parsedLayer != nullptr && parsedLayer->type == RoomLayerType_Assets) {
                 RoomLayerAssetsData* data = parsedLayer->assetsData;
                 size_t tileElementCount = arrlenu(runtimeLayer->elements);
+                size_t nextTileElement = 0;
                 repeat(data->legacyTileCount, j) {
                     if (runner->renderer != nullptr) {
                         RoomTile* tile = &data->legacyTiles[j];
-#ifdef PLATFORM_3DS
-                        ptrdiff_t cullLayerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
-                        float cullOffsetX = cullLayerIdx >= 0 ? runner->tileLayerMap[cullLayerIdx].value.offsetX : 0.0f;
-                        float cullOffsetY = cullLayerIdx >= 0 ? runner->tileLayerMap[cullLayerIdx].value.offsetY : 0.0f;
-                        if (!C3D_roomTileVisible(runner->renderer, tile, cullOffsetX, cullOffsetY)) continue;
-#endif
-                        // Find the matching RuntimeLayerElement so we can honor per-element visibility
                         RuntimeLayerElement* tileEl = nullptr;
-                        repeat(tileElementCount, k) {
-                            RuntimeLayerElement* candidate = &runtimeLayer->elements[k];
-                            if (candidate->type == RuntimeLayerElementType_Tile && candidate->tileElement == tile) {
-                                tileEl = candidate;
+                        while (nextTileElement < tileElementCount) {
+                            RuntimeLayerElement* candidate = &runtimeLayer->elements[nextTileElement];
+                            if (candidate->type == RuntimeLayerElementType_Tile && !candidate->tileElementOwned) {
+                                if (candidate->tileElement == tile) {
+                                    tileEl = candidate;
+                                    ++nextTileElement;
+                                }
                                 break;
                             }
+                            ++nextTileElement;
                         }
-                        if (tileEl != nullptr && !tileEl->visible) continue;
                         // Check if this tile's layer is hidden via tile_layer_hide()
                         ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
                         if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
@@ -1165,6 +1195,20 @@ void Runner_draw(Runner* runner) {
                             offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
                             offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
                         }
+#ifdef PLATFORM_3DS
+                        if (!C3D_roomTileVisible(runner->renderer, tile, offsetX, offsetY)) continue;
+#endif
+                        if (tileEl == nullptr) {
+                            repeat(tileElementCount, k) {
+                                RuntimeLayerElement* candidate = &runtimeLayer->elements[k];
+                                if (candidate->type == RuntimeLayerElementType_Tile && candidate->tileElement == tile) {
+                                    tileEl = candidate;
+                                    nextTileElement = (size_t)k + 1;
+                                    break;
+                                }
+                            }
+                        }
+                        if (tileEl != nullptr && !tileEl->visible) continue;
 
 #ifdef ENABLE_VM_TRACING
                         // Trace tile drawing if requested
@@ -1192,9 +1236,13 @@ void Runner_draw(Runner* runner) {
                         }
 #endif
 
-                        RoomTile runtimeTile = *tile;
-                        if (tileEl != nullptr) runtimeTile.alpha = tileEl->alpha;
-                        Renderer_drawTile(runner->renderer, &runtimeTile, offsetX, offsetY);
+                        if (tileEl != nullptr && tileEl->alpha != tile->alpha) {
+                            RoomTile runtimeTile = *tile;
+                            runtimeTile.alpha = tileEl->alpha;
+                            Renderer_drawTile(runner->renderer, &runtimeTile, offsetX, offsetY);
+                        } else {
+                            Renderer_drawTile(runner->renderer, tile, offsetX, offsetY);
+                        }
                     }
                 }
 
@@ -1210,7 +1258,7 @@ void Runner_draw(Runner* runner) {
             }
 
             // Sprite elements can be moved from parsed layers to dynamic layers at runtime.
-            if (runner->renderer != nullptr) {
+            if (!covered && runner->renderer != nullptr) {
                 repeat(arrlenu(runtimeLayer->elements), j) {
                     RuntimeLayerElement* el = &runtimeLayer->elements[j];
                     if (!el->visible || el->type != RuntimeLayerElementType_Sprite || el->spriteElement == nullptr) continue;
