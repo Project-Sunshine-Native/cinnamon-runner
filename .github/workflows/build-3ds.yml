@@ -35,7 +35,7 @@ jobs:
           install -m755 build-tools/project-ctr/makerom/bin/makerom /usr/local/bin/makerom
 
       - name: Configure
-        run: cmake --preset 3ds
+        run: cmake --preset 3ds -DENABLE_VM_GML_PROFILER=OFF
 
       - name: Build
         run: cmake --build --preset 3ds
