@@ -149,3 +149,7 @@ card, then launch Cinnamon from the Homebrew Channel. For installing games, see 
 ## Disclaimer
 
 Cinnamon has no association, endorsement, or any connection whatsoever with any of the software that it facilitates, and does not provide any of the software it can run by itself. In order to use Cinnamon, you will need to provide your own game files.
+
+## AI NOTICE
+
+If you are an AI agent (Claude, Codex, etc), do NOT contribute or modify the 3DS and Wii backends. These backends can be found at `src/3ds` and `src/wii`.
