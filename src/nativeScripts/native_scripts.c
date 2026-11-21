@@ -1,5 +1,5 @@
 #include "native_scripts.h"
-#include "generated/generated_native_scripts.h"
+#include "UNDERTALE/generated_native_scripts.h"
 
 void NativeSnowfloorDraw_register(VMContext* ctx);
 void NativePiperSteamDraw_register(VMContext* ctx);
