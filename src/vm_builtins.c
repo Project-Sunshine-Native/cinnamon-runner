@@ -13131,9 +13131,9 @@ static RValue builtin_surface_create(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     return RValue_makeReal(0.0);
 }
 
-// Cinnamon extension: create_surface_ext(width, height, name).
-static RValue builtin_create_surface_ext(VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("create_surface_ext", 3, RValue_makeReal(-1.0));
+// Cinnamon extension: surface_create_ext(width, height, name).
+static RValue builtin_surface_create_ext(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("surface_create_ext", 3, RValue_makeReal(-1.0));
     if (args[2].type != RVALUE_STRING || args[2].string == nullptr ||
         ctx->runner->renderer == nullptr) return RValue_makeReal(-1.0);
     GMLReal width = RValue_toReal(args[0]), height = RValue_toReal(args[1]);
@@ -25408,7 +25408,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
 
     // Surface
     VM_registerBuiltin(ctx, "surface_create", builtin_surface_create);
-    VM_registerBuiltin(ctx, "create_surface_ext", builtin_create_surface_ext);
+    VM_registerBuiltin(ctx, "surface_create_ext", builtin_surface_create_ext);
     VM_registerBuiltin(ctx, "surface_free", builtin_surface_free);
     VM_registerBuiltin(ctx, "surface_set_target", builtin_surface_set_target);
     VM_registerBuiltin(ctx, "surface_reset_target", builtin_surface_reset_target);
