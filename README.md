@@ -11,6 +11,8 @@ Cinnamon is a **fully human made** fork of the Butterscotch GameMaker runner spe
 
 The 3DS, Wii, and Wii U backends were built by humans and humans only. No AI tools were used for development!
 
+*However, the project Cinnamon forks off of, Butterscotch, has had AI assistance in the project, though it is mostly human. Please keep this in mind! The code that runs the game on your 3DS is still human made!*
+
 ## Game Compatibility
 
 Cinnamon's goal is to be able to have most GameMaker games fully playable. 
