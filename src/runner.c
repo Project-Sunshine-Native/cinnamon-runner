@@ -776,6 +776,8 @@ void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerO
         endX = (uint32_t)fmax(0.0, fmin((double)data->tilesX, right));
         endY = (uint32_t)fmax(0.0, fmin((double)data->tilesY, bottom));
     }
+    if (C3D_drawPackedTilemap(runner->renderer, data, tileset, firstX, firstY,
+            endX, endY, layerOffsetX, layerOffsetY)) return;
 #endif
     for (uint32_t ty = firstY; ty < endY; ty++) {
         for (uint32_t tx = firstX; tx < endX; tx++) {
