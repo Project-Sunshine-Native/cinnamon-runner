@@ -66,6 +66,7 @@ void NativeHotlandRededgeDraw_register(VMContext* ctx);
 void NativeBrightwaterfallDraw_register(VMContext* ctx);
 void NativeGlowparticle1Step_register(VMContext* ctx);
 void NativeRoundedgeDraw_register(VMContext* ctx);
+void NativePurplegrassDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -134,4 +135,5 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeBrightwaterfallDraw_register(ctx);
     NativeGlowparticle1Step_register(ctx);
     NativeRoundedgeDraw_register(ctx);
+    NativePurplegrassDraw_register(ctx);
 }
