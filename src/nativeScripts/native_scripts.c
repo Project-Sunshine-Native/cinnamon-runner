@@ -59,6 +59,10 @@ void NativeFloweyTvDraw_register(VMContext* ctx);
 void NativeConveyorParentDraw_register(VMContext* ctx);
 void NativeTrueLavawaverDraw_register(VMContext* ctx);
 void NativeTrueAntiwaverDraw_register(VMContext* ctx);
+void NativeCogsmallDraw_register(VMContext* ctx);
+void NativeHotlandBottomedgeDraw_register(VMContext* ctx);
+void NativeBouncersteamStep_register(VMContext* ctx);
+void NativeHotlandRededgeDraw_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -120,4 +124,8 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeConveyorParentDraw_register(ctx);
     NativeTrueLavawaverDraw_register(ctx);
     NativeTrueAntiwaverDraw_register(ctx);
+    NativeCogsmallDraw_register(ctx);
+    NativeHotlandBottomedgeDraw_register(ctx);
+    NativeBouncersteamStep_register(ctx);
+    NativeHotlandRededgeDraw_register(ctx);
 }
