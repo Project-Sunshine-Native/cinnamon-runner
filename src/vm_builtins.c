@@ -13131,18 +13131,18 @@ static RValue builtin_surface_create(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     return RValue_makeReal(0.0);
 }
 
-// Cinnamon extension: surface_create_ext(width, height, name).
+// Cinnamon extension: surface_create_ext(name, width, height).
 static RValue builtin_surface_create_ext(VMContext* ctx, RValue* args, int32_t argCount) {
     REQUIRE_ARGC_AT_LEAST("surface_create_ext", 3, RValue_makeReal(-1.0));
-    if (args[2].type != RVALUE_STRING || args[2].string == nullptr ||
+    if (args[0].type != RVALUE_STRING || args[0].string == nullptr ||
         ctx->runner->renderer == nullptr) return RValue_makeReal(-1.0);
-    GMLReal width = RValue_toReal(args[0]), height = RValue_toReal(args[1]);
+    GMLReal width = RValue_toReal(args[1]), height = RValue_toReal(args[2]);
     // Validate before converting to int32, including NaN/overflow inputs.
     if (!isfinite(width) || !isfinite(height) || width < 1 || height < 1 ||
         (double)width > (double)INT32_MAX || (double)height > (double)INT32_MAX)
         return RValue_makeReal(-1.0);
     return RValue_makeReal(Renderer_createSurfaceExt(ctx->runner->renderer,
-        (int32_t)width, (int32_t)height, args[2].string));
+        (int32_t)width, (int32_t)height, args[0].string));
 }
 
 static RValue builtin_surface_exists(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
