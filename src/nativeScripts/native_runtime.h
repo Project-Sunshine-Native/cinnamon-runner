@@ -28,6 +28,12 @@ typedef struct {
 #define NATIVE_CALL_BINDING_INIT { nullptr, nullptr, -1 }
 #define NATIVE_ASSET_BINDING_INIT { nullptr, -1 }
 
+static inline int NativeScript_compareReals(GMLReal a, GMLReal b, GMLReal epsilon) {
+    GMLReal diff = a - b;
+    if (GMLReal_fabs(diff) <= epsilon) return 0;
+    return diff < 0.0 ? -1 : 1;
+}
+
 typedef struct {
     VMContext* ctx;
     RValue* temporaries;
