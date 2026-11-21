@@ -32,6 +32,7 @@
 #define N3DS_BOTTOM_SCREEN_WIDTH 320
 #define N3DS_BOTTOM_SCREEN_HEIGHT 240
 #define N3DS_SDMC_ROOT "sdmc:/3ds/cinnamon"
+#define N3DS_SAVE_ROOT N3DS_SDMC_ROOT "/saves"
 #define N3DS_ROMFS_DATA_WIN_PATH "romfs:/data.win"
 
 static int32_t gN3DSGameScreenWidth = N3DS_TOP_SCREEN_WIDTH;
@@ -361,6 +362,31 @@ static char* n3ds_appResolveGamePath(
     return outPath;
 }
 
+static void n3ds_appGameSavePath(const Gen8* gen8, char* path, size_t size) {
+    const char* gameName = gen8->name != NULL && gen8->name[0] != '\0'
+        ? gen8->name : gen8->displayName;
+    const char* title = gen8->displayName;
+    if (title != NULL && (strcmp(title, "DELTARUNE") == 0 ||
+        strncmp(title, "DELTARUNE Chapter ", 18) == 0)) {
+        gameName = "DELTARUNE";
+    }
+
+    char folder[256];
+    size_t length = 0;
+    if (gameName != NULL) {
+        for (const unsigned char* p = (const unsigned char*)gameName;
+            *p != '\0' && length < sizeof(folder) - 1; ++p) {
+            unsigned char c = *p;
+            if (c < 32 || strchr("\\/:*?\"<>|", c) != NULL) c = '_';
+            folder[length++] = (char)c;
+        }
+    }
+    while (length > 0 && (folder[length - 1] == ' ' || folder[length - 1] == '.'))
+        --length;
+    folder[length] = '\0';
+    snprintf(path, size, "%s/%s", N3DS_SAVE_ROOT, length > 0 ? folder : "game");
+}
+
 static void n3ds_sessionDestroy(N3DSGameSession* session) {
     if (session == NULL) return;
     if (session->audioSystem != NULL) session->audioSystem->vtable->destroy(session->audioSystem);
@@ -435,8 +461,8 @@ static bool n3ds_sessionLoad(N3DSGameSession* session, const char* dataWinPath, 
     const char* gameName = session->dataWin->gen8.displayName;
     n3ds_loadSetGameName(&loadingScreen, gameName);
     n3ds_loadSet(&loadingScreen, "Creating filesystem...", 1, 1);
-    const char* saveRoot =
-        strncmp(session->gameRoot, "romfs:", 6) == 0 ? N3DS_SDMC_ROOT : session->gameRoot;
+    char saveRoot[512];
+    n3ds_appGameSavePath(&session->dataWin->gen8, saveRoot, sizeof(saveRoot));
     session->fileSystem = (FileSystem*)n3ds_fsCreate(session->gameRoot, saveRoot);
 
     n3ds_loadSet(&loadingScreen, "Creating audio...", 1, 1);

@@ -2,12 +2,15 @@
 #include "../utils.h"
 #include <3ds.h>
 #include <dirent.h>
+#include <errno.h>
+#include <ctype.h>
 #include <limits.h>
 #include <stb/ds/stb_ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define N3DS_FILE_BUFFER_SIZE (128u * 1024u)
@@ -30,6 +33,24 @@ static char* n3ds_fsNormalizePath(const char* path) {
         if (*cursor == '\\') *cursor = '/';
     }
     return normalized;
+}
+
+static bool n3ds_fsMakeParentDirectories(const char* path) {
+    char* parent = safeStrdup(path);
+    char* scheme = strstr(parent, ":/");
+    char* start = scheme != NULL ? scheme + 2 : parent;
+
+    for (char* slash = strchr(start, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
+        *slash = '\0';
+        bool ok = mkdir(parent, 0777) == 0 || errno == EEXIST;
+        *slash = '/';
+        if (!ok) {
+            free(parent);
+            return false;
+        }
+    }
+    free(parent);
+    return true;
 }
 
 static void n3ds_fsSetFileBuffer(FILE* file) {
@@ -95,6 +116,111 @@ static char* n3ds_fsJoin(const char* base, const char* relativePath) {
     result[cursor + relLen] = '\0';
     free(normalizedRelativePath);
     return result;
+}
+
+static bool n3ds_fsIsSaveFile(const char* path) {
+    if (path == NULL || path[0] == '\0' || strchr(path, '/') != NULL || strchr(path, '\\') != NULL)
+        return false;
+
+    if (strncmp(path, "filech", 6) == 0 && isdigit((unsigned char)path[6])) return true;
+    if (strncmp(path, "file", 4) == 0 && isdigit((unsigned char)path[4])) return true;
+    if (strncmp(path, "save", 4) == 0) return true;
+
+    const char* extension = strrchr(path, '.');
+    return extension != NULL && (strcmp(extension, ".ini") == 0 ||
+        strcmp(extension, ".sav") == 0 || strcmp(extension, ".save") == 0);
+}
+
+static bool n3ds_fsIsChapterDirectory(const char* name) {
+    char lower[256];
+    size_t length = strlen(name);
+    if (length >= sizeof(lower)) return false;
+    for (size_t i = 0; i < length; ++i)
+        lower[i] = (char)tolower((unsigned char)name[i]);
+    lower[length] = '\0';
+
+    return strstr(lower, "deltarune") != NULL || strstr(lower, "chapter") != NULL ||
+        (length > 2 && lower[0] == 'c' && lower[1] == 'h' &&
+            isdigit((unsigned char)lower[2]));
+}
+
+static void n3ds_fsConsiderLegacySave(const char* root, const char* name,
+    char** selectedPath, time_t* modified) {
+    char* candidate = n3ds_fsJoin(root, name);
+    struct stat st;
+    if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+        (*selectedPath == NULL || st.st_mtime > *modified)) {
+        free(*selectedPath);
+        *selectedPath = candidate;
+        *modified = st.st_mtime;
+    } else {
+        free(candidate);
+    }
+}
+
+static char* n3ds_fsFindLegacySave(N3DSFileSystem* fs, const char* name) {
+    if (!n3ds_fsIsSaveFile(name) ||
+        strncmp(fs->saveBasePath, N3DS_SDMC_LEGACY_ROOT "/saves/",
+            sizeof(N3DS_SDMC_LEGACY_ROOT "/saves/") - 1) != 0)
+        return NULL;
+
+    char* selected = NULL;
+    time_t modified = 0;
+    n3ds_fsConsiderLegacySave(fs->gameBasePath, name, &selected, &modified);
+    n3ds_fsConsiderLegacySave(N3DS_SDMC_LEGACY_ROOT, name, &selected, &modified);
+
+    if (strcmp(fs->saveBasePath, N3DS_SDMC_LEGACY_ROOT "/saves/DELTARUNE") == 0) {
+        DIR* dir = opendir(N3DS_SDMC_LEGACY_ROOT);
+        if (dir != NULL) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (!n3ds_fsIsChapterDirectory(entry->d_name)) continue;
+                char* chapter = n3ds_fsJoin(N3DS_SDMC_LEGACY_ROOT, entry->d_name);
+                if (n3ds_fsPathIsDirectory(chapter))
+                    n3ds_fsConsiderLegacySave(chapter, name, &selected, &modified);
+                free(chapter);
+            }
+            closedir(dir);
+        }
+    }
+    return selected;
+}
+
+static bool n3ds_fsCopyLegacySave(const char* source, const char* destination) {
+    if (!n3ds_fsMakeParentDirectories(destination)) return false;
+
+    FILE* input = fopen(source, "rb");
+    if (input == NULL) return false;
+
+    size_t length = strlen(destination);
+    char* temp = safeMalloc(length + sizeof(".importing"));
+    memcpy(temp, destination, length);
+    memcpy(temp + length, ".importing", sizeof(".importing"));
+    FILE* output = fopen(temp, "wb");
+    if (output == NULL) {
+        fclose(input);
+        free(temp);
+        return false;
+    }
+
+    uint8_t buffer[8192];
+    bool ok = true;
+    size_t count;
+    while ((count = fread(buffer, 1, sizeof(buffer), input)) != 0) {
+        if (fwrite(buffer, 1, count, output) != count) {
+            ok = false;
+            break;
+        }
+    }
+    if (ferror(input)) ok = false;
+    if (fclose(output) != 0) ok = false;
+    fclose(input);
+
+    if (ok && !n3ds_fsPathExists(destination))
+        ok = rename(temp, destination) == 0;
+    if (!ok || n3ds_fsPathExists(temp)) remove(temp);
+    free(temp);
+    return ok;
 }
 
 static bool gN3DSFileSystemGameRootDidScan = false;
@@ -215,25 +341,36 @@ static char* n3ds_fsResolvePath(FileSystem* fs, const char* relativePath) {
         return cachedPath;
     }
 
-    char* gamePath = n3ds_fsJoin(n3ds->gameBasePath, relativePath);
-    if (n3ds_fsPathExists(gamePath)) {
-        n3ds_fsSetCachedPath(n3ds, relativePath, gamePath);
-        free(normalizedRelativePath);
-        return gamePath;
-    }
-
     char* savePath = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
-    if (n3ds_fsPathExists(savePath)) {
+    if (!n3ds_fsPathExists(savePath)) {
+        char* legacy = n3ds_fsFindLegacySave(n3ds, relativePath);
+        if (legacy != NULL) {
+            if (!n3ds_fsCopyLegacySave(legacy, savePath)) {
+                free(savePath);
+                free(normalizedRelativePath);
+                return legacy;
+            }
+            free(legacy);
+        }
+    }
+    if (relativePath[0] == '\0' || n3ds_fsPathExists(savePath)) {
         n3ds_fsSetCachedPath(n3ds, relativePath, savePath);
-        free(gamePath);
         free(normalizedRelativePath);
         return savePath;
     }
 
-    n3ds_fsSetCachedPath(n3ds, relativePath, gamePath);
-    free(savePath);
+    char* gamePath = n3ds_fsJoin(n3ds->gameBasePath, relativePath);
+    if (n3ds_fsPathExists(gamePath)) {
+        n3ds_fsSetCachedPath(n3ds, relativePath, gamePath);
+        free(savePath);
+        free(normalizedRelativePath);
+        return gamePath;
+    }
+
+    n3ds_fsSetCachedPath(n3ds, relativePath, savePath);
+    free(gamePath);
     free(normalizedRelativePath);
-    return gamePath;
+    return savePath;
 }
 
 static bool n3ds_fsFileExists(FileSystem* fs, const char* relativePath) {
@@ -298,6 +435,10 @@ static bool n3ds_fsWriteFileText(
     N3DSFileSystem* n3ds = (N3DSFileSystem*)fs;
     char* path = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
     if (path == NULL) return false;
+    if (!n3ds_fsMakeParentDirectories(path)) {
+        free(path);
+        return false;
+    }
 
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
@@ -336,6 +477,10 @@ static bool n3ds_fsCreateDirectory(FileSystem* fs, const char* relativePath) {
     N3DSFileSystem* n3ds = (N3DSFileSystem*)fs;
     char* path = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
     if (path == NULL) return false;
+    if (!n3ds_fsMakeParentDirectories(path)) {
+        free(path);
+        return false;
+    }
     int rc = mkdir(path, 0777);
     free(path);
     return rc == 0;
@@ -350,20 +495,22 @@ static bool n3ds_fsDeleteDirectory(FileSystem* fs, const char* relativePath) {
     return rc == 0;
 }
 
-static FileSystemDirEntry* n3ds_fsListDirectory(FileSystem* fs, const char* relativePath) {
-    char* path = n3ds_fsResolvePath(fs, relativePath);
-    if (path == NULL) return NULL;
-
+static void n3ds_fsAppendDirectory(FileSystemDirEntry** entries, const char* path) {
     DIR* dir = opendir(path);
-    if (dir == NULL) {
-        free(path);
-        return NULL;
-    }
+    if (dir == NULL) return;
 
-    FileSystemDirEntry* entries = NULL;
     struct dirent* entry = NULL;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        bool duplicate = false;
+        for (size_t i = 0; i < arrlenu(*entries); ++i) {
+            if (strcmp((*entries)[i].name, entry->d_name) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
 
         bool isDirectory = false;
 #ifdef DT_DIR
@@ -378,14 +525,31 @@ static FileSystemDirEntry* n3ds_fsListDirectory(FileSystem* fs, const char* rela
             free(childPath);
         }
 
-        arrput(entries, ((FileSystemDirEntry){
-                            .name = safeStrdup(entry->d_name),
-                            .isDirectory = isDirectory,
-                        }));
+        arrput(*entries, ((FileSystemDirEntry){
+                           .name = safeStrdup(entry->d_name),
+                           .isDirectory = isDirectory,
+                       }));
     }
-
     closedir(dir);
-    free(path);
+}
+
+static FileSystemDirEntry* n3ds_fsListDirectory(FileSystem* fs, const char* relativePath) {
+    N3DSFileSystem* n3ds = (N3DSFileSystem*)fs;
+    if (relativePath == NULL) return NULL;
+
+    FileSystemDirEntry* entries = NULL;
+    if (n3ds_fsPathHasScheme(relativePath)) {
+        char* path = n3ds_fsNormalizePath(relativePath);
+        n3ds_fsAppendDirectory(&entries, path);
+        free(path);
+    } else {
+        char* savePath = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
+        char* gamePath = n3ds_fsJoin(n3ds->gameBasePath, relativePath);
+        n3ds_fsAppendDirectory(&entries, savePath);
+        if (strcmp(savePath, gamePath) != 0) n3ds_fsAppendDirectory(&entries, gamePath);
+        free(savePath);
+        free(gamePath);
+    }
     return entries;
 }
 
@@ -439,6 +603,10 @@ static bool n3ds_fsWriteFileBinary(
     N3DSFileSystem* n3ds = (N3DSFileSystem*)fs;
     char* path = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
     if (path == NULL) return false;
+    if (!n3ds_fsMakeParentDirectories(path)) {
+        free(path);
+        return false;
+    }
 
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
@@ -465,8 +633,25 @@ static const char* n3ds_fsBinaryModeString(int32_t mode) {
 
 static void* n3ds_fsBinaryOpen(FileSystem* fs, const char* relativePath, int32_t mode) {
     N3DSFileSystem* n3ds = (N3DSFileSystem*)fs;
-    char* path = n3ds_fsJoin(n3ds->saveBasePath, relativePath);
+    char* path = mode == GML_FILE_BIN_READ
+        ? n3ds_fsResolvePath(fs, relativePath)
+        : n3ds_fsJoin(n3ds->saveBasePath, relativePath);
     if (path == NULL) return NULL;
+    if (mode == GML_FILE_BIN_READWRITE && !n3ds_fsPathExists(path)) {
+        char* legacy = n3ds_fsFindLegacySave(n3ds, relativePath);
+        if (legacy != NULL) {
+            bool copied = n3ds_fsCopyLegacySave(legacy, path);
+            free(legacy);
+            if (!copied) {
+                free(path);
+                return NULL;
+            }
+        }
+    }
+    if (mode != GML_FILE_BIN_READ && !n3ds_fsMakeParentDirectories(path)) {
+        free(path);
+        return NULL;
+    }
 
     FILE* file = fopen(path, n3ds_fsBinaryModeString(mode));
     if (file == NULL && mode == GML_FILE_BIN_READWRITE) {
