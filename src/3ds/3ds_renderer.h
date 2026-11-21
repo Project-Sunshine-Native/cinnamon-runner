@@ -21,6 +21,9 @@ N3DSC3DVertex* C3D_beginVertices(
 void C3D_commitVertices(Renderer* renderer, uint32_t vertexCount);
 void C3D_getViewRect(const Renderer* renderer, int32_t rect[4]);
 bool C3D_getTileCullRect(const Renderer* renderer, float rect[4]);
+bool C3D_drawPackedTilemap(Renderer* renderer, const RoomLayerTilesData* data,
+    const Background* tileset, uint32_t firstX, uint32_t firstY, uint32_t endX,
+    uint32_t endY, float offsetX, float offsetY);
 bool C3D_roomTileVisible(const Renderer* renderer, const RoomTile* tile, float offsetX, float offsetY);
 
 typedef struct {

@@ -3340,6 +3340,99 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
         rgba);
 }
 
+bool C3D_drawPackedTilemap(Renderer* base, const RoomLayerTilesData* data,
+    const Background* tileset, uint32_t firstX, uint32_t firstY, uint32_t endX,
+    uint32_t endY, float offsetX, float offsetY) {
+    enum { CACHE_SIZE = 64, TILE_INDEX_MASK = 0x7ffff };
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    int32_t tpag = tileset->tpagIndex;
+    float view[4];
+    if (firstX >= endX || firstY >= endY) return true;
+    if (renderer->screenTransformActive || !C3D_getTileCullRect(base, view) ||
+        endX - firstX > CACHE_SIZE || !isfinite(offsetX) || !isfinite(offsetY) ||
+        (uint32_t)tpag >= renderer->tpagBindingCount ||
+        renderer->tpagBindings[tpag].source != N3DS_TPAG_SOURCE_ATLAS ||
+        !renderer->tpagBindings[tpag].hasTilemapEntries ||
+        C3D_isNativeScreenOverride(renderer, tpag, NULL)) return false;
+
+    for (uint32_t y = firstY; y < endY; ++y) {
+        const uint32_t* row = &data->tileData[y * data->tilesX];
+        for (uint32_t x = firstX; x < endX; ++x) {
+            if ((row[x] & ~((uint32_t)TILE_INDEX_MASK)) != 0) return false;
+        }
+    }
+
+    uint32_t width = tileset->gms2TileWidth, height = tileset->gms2TileHeight;
+    float columns[CACHE_SIZE];
+    for (uint32_t x = firstX; x < endX; ++x) {
+        float left = (float)(x * width) + offsetX, unused = 0.0f;
+        C3D_floorSpritePosition(renderer, 0.0f, 0.0f, &left, &unused);
+        columns[x - firstX] = left;
+    }
+
+    struct {
+        uint32_t index;
+        uint32_t page;
+        float srcX, srcY;
+        N3DSUVRect uv;
+        const N3DSAtlasTileEntry* entry;
+    } cache[CACHE_SIZE] = {0};
+    uint32_t lastPage = UINT32_MAX;
+    for (uint32_t y = firstY; y < endY; ++y) {
+        float top = (float)(y * height) + offsetY, unused = 0.0f;
+        C3D_floorSpritePosition(renderer, 0.0f, 0.0f, &unused, &top);
+        float bottom = top + (float)height;
+        if (bottom <= view[1] || top >= view[3]) continue;
+
+        const uint32_t* row = &data->tileData[y * data->tilesX];
+        for (uint32_t x = firstX; x < endX; ++x) {
+            uint32_t tile = row[x];
+            if (tile == 0 || tile > tileset->gms2TileCount) continue;
+            float left = columns[x - firstX], right = left + (float)width;
+            if (right <= view[0] || left >= view[2]) continue;
+
+            uint32_t slot = tile & (CACHE_SIZE - 1u);
+            if (cache[slot].index != tile) {
+                uint32_t bx = tileset->gms2OutputBorderX, by = tileset->gms2OutputBorderY;
+                uint32_t col = tile % tileset->gms2TileColumns, line = tile / tileset->gms2TileColumns;
+                int32_t srcX = (int32_t)(col * (width + 2 * bx) + bx);
+                int32_t srcY = (int32_t)(line * (height + 2 * by) + by);
+                cache[slot].index = tile;
+                cache[slot].srcX = (float)srcX;
+                cache[slot].srcY = (float)srcY;
+                cache[slot].entry = C3D_findTilemapAtlasEntry(renderer, tpag, srcX, srcY, width, height);
+                cache[slot].page = UINT32_MAX;
+            }
+
+            const N3DSAtlasTileEntry* entry = cache[slot].entry;
+            if (entry != NULL && entry->pageIndex < renderer->atlas.pageCount &&
+                (lastPage == entry->pageIndex || C3D_loadRoomWantedAtlasPage(renderer, entry->pageIndex, NULL))) {
+                lastPage = entry->pageIndex;
+                N3DSAtlasPage* page = &renderer->atlas.pages[lastPage];
+                N3DSUVRect* uv = &cache[slot].uv;
+                if (cache[slot].page != lastPage) {
+                    C3D_uvSubRect(uv, &page->region, (float)entry->x, (float)entry->y,
+                        (float)(entry->x + entry->width), (float)(entry->y + entry->height));
+                    cache[slot].page = lastPage;
+                }
+                const N3DSVertex vertices[4] = {
+                    {{left, top}, {uv->left, uv->top}},
+                    {{right, top}, {uv->right, uv->top}},
+                    {{left, bottom}, {uv->left, uv->bottom}},
+                    {{right, bottom}, {uv->right, uv->bottom}},
+                };
+                n3ds_c3dQuad(&renderer->drawContext, &page->tex, vertices, 0xffffffffu);
+            } else {
+                lastPage = UINT32_MAX;
+                C3D_drawSpritePart(base, tpag, cache[slot].srcX, cache[slot].srcY, width, height,
+                    (float)(x * width) + offsetX, (float)(y * height) + offsetY,
+                    1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0xffffffu, 1.0f);
+            }
+        }
+    }
+    return true;
+}
+
 bool C3D_drawTrueLavaWave(Renderer* base, int32_t tpagIndex, float srcLeft,
     float srcWidth, float xOffset, GMLReal baseY, const GMLReal waveX[20], float alpha) {
     N3DSRenderer* renderer = (N3DSRenderer*)base;
