@@ -63,6 +63,8 @@ void NativeCogsmallDraw_register(VMContext* ctx);
 void NativeHotlandBottomedgeDraw_register(VMContext* ctx);
 void NativeBouncersteamStep_register(VMContext* ctx);
 void NativeHotlandRededgeDraw_register(VMContext* ctx);
+void NativeBrightwaterfallDraw_register(VMContext* ctx);
+void NativeGlowparticle1Step_register(VMContext* ctx);
 
 void NativeScripts_registerAll(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -128,4 +130,6 @@ void NativeScripts_registerAll(VMContext* ctx) {
     NativeHotlandBottomedgeDraw_register(ctx);
     NativeBouncersteamStep_register(ctx);
     NativeHotlandRededgeDraw_register(ctx);
+    NativeBrightwaterfallDraw_register(ctx);
+    NativeGlowparticle1Step_register(ctx);
 }
