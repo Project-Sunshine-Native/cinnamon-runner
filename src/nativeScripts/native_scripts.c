@@ -84,6 +84,9 @@ void NativeCaterpillarEndStep_register(VMContext* ctx);
 void NativeDeviceChoiceDraw_register(VMContext* ctx);
 void NativeDarkPonmanDraw_register(VMContext* ctx);
 void NativeDarkPonmanStep_register(VMContext* ctx);
+void NativeLightfairyDraw_register(VMContext* ctx);
+void NativeLightfairyStep_register(VMContext* ctx);
+void NativeScissordancerStep_register(VMContext* ctx);
 
 static void registerUndertale(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -170,6 +173,9 @@ static void registerDeltaruneChapter1(VMContext* ctx) {
     NativeDeviceChoiceDraw_register(ctx);
     NativeDarkPonmanDraw_register(ctx);
     NativeDarkPonmanStep_register(ctx);
+    NativeLightfairyDraw_register(ctx);
+    NativeLightfairyStep_register(ctx);
+    NativeScissordancerStep_register(ctx);
 }
 
 // We dont want the scripts running on a different completely unrelated game, so we'll check to see if the name here matches the games GEN8 name
