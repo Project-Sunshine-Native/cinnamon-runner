@@ -331,6 +331,8 @@ static char* n3ds_fsResolvePath(FileSystem* fs, const char* relativePath) {
     if (relativePath == NULL) return NULL;
     if (n3ds_fsPathHasScheme(relativePath))
         return n3ds_fsNormalizePath(relativePath);
+    if (relativePath[0] == '\0')
+        return n3ds_fsJoin(n3ds->gameBasePath, relativePath);
 
     char* normalizedRelativePath = n3ds_fsNormalizePath(relativePath);
     relativePath = normalizedRelativePath;
@@ -353,7 +355,7 @@ static char* n3ds_fsResolvePath(FileSystem* fs, const char* relativePath) {
             free(legacy);
         }
     }
-    if (relativePath[0] == '\0' || n3ds_fsPathExists(savePath)) {
+    if (n3ds_fsPathExists(savePath)) {
         n3ds_fsSetCachedPath(n3ds, relativePath, savePath);
         free(normalizedRelativePath);
         return savePath;
