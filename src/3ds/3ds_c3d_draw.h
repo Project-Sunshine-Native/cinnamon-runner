@@ -75,6 +75,9 @@ typedef struct {
     bool stateDirty;
     bool projectionDirty;
     bool frameActive;
+    bool framePending;
+    u64 frameWaitTicks;
+    float previousGpuMs;
     void (*finishDraws)(void* user);
     void* finishDrawsUser;
 } N3DSC3DDrawContext;
@@ -82,6 +85,7 @@ typedef struct {
 bool n3ds_c3dInit(N3DSC3DDrawContext* ctx, uint32_t maxQuads);
 void n3ds_c3dDestroy(N3DSC3DDrawContext* ctx);
 void n3ds_c3dBeginFrame(N3DSC3DDrawContext* ctx);
+void n3ds_c3dAcquireFrame(N3DSC3DDrawContext* ctx);
 void n3ds_c3dEndFrame(N3DSC3DDrawContext* ctx);
 void n3ds_c3dUpdateProjection(N3DSC3DDrawContext* ctx, float width, float height);
 void n3ds_c3dSetSurfaceProj(N3DSC3DDrawContext* ctx, float width, float height);

@@ -1512,6 +1512,7 @@ static uint32_t C3D_pickEvictableAtlasPage(
 
 static bool C3D_suspendDrawFrame(N3DSRenderer* renderer) {
     if (!renderer->drawContext.frameActive) return false;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
     bool topUsed = renderer->topTarget != NULL && renderer->topTarget->used;
     bool bottomUsed = renderer->bottomTarget != NULL && renderer->bottomTarget->used;
     n3ds_c3dFlush(&renderer->drawContext);
@@ -2296,6 +2297,7 @@ static bool C3D_resolveTextureRegion(
 }
 
 static void C3D_bindTarget(N3DSRenderer* renderer, int32_t surfaceId, bool bottomScreen) {
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
 #if !N3DS_HAS_BOTTOM_TARGET
     bottomScreen = false;
 #endif
@@ -4693,6 +4695,7 @@ static bool C3D_transferSurface(
     if (source->target == NULL || dest->target == NULL ||
         source->target->frameBuf.colorBuf == NULL || dest->target->frameBuf.colorBuf == NULL)
         return false;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
     n3ds_c3dFlush(&renderer->drawContext);
     if (renderer->currentTargetSurfaceId == sourceID) {
         n3ds_c3dFrameSplit(&renderer->drawContext);
@@ -5742,6 +5745,7 @@ static bool C3D_shadersSupported(void) {
 static void C3D_clearActive(Renderer* base, uint32_t color, float alpha) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
     C3D_safeFrameSplit(renderer);
     if (renderer->currentTargetSurfaceId >= 0 &&
         (uint32_t)renderer->currentTargetSurfaceId < renderer->surfaceCount &&
@@ -6376,6 +6380,23 @@ void C3D_endDrawFrame(Renderer* renderer) {
     while (gspIsPresentPending(GFX_TOP) || gspIsPresentPending(GFX_BOTTOM))
         gspWaitForAnyEvent();
     n3ds_c3dEndFrame(&n3ds->drawContext);
+}
+
+void C3D_deferDrawFrame(Renderer* renderer) {
+    C3D_beginDrawFrame(renderer);
+    ((N3DSRenderer*)renderer)->drawContext.framePending = true;
+}
+
+void C3D_acquireDrawFrame(Renderer* renderer) {
+    n3ds_c3dAcquireFrame(&((N3DSRenderer*)renderer)->drawContext);
+}
+
+N3DSFrameGpuTimings C3D_getFrameGpuTimings(const Renderer* renderer) {
+    const N3DSRenderer* n3ds = (const N3DSRenderer*)renderer;
+    return (N3DSFrameGpuTimings){
+        .frameWaitTicks = n3ds->drawContext.frameWaitTicks,
+        .previousGpuMs = n3ds->drawContext.previousGpuMs,
+    };
 }
 
 N3DSC3DVertex* C3D_beginVertices(

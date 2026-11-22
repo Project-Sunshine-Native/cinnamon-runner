@@ -7,6 +7,9 @@
 
 typedef struct {
     u64 frameStartTick;
+    u64 frameIntervalTicks;
+    u64 gpuWaitTicks;
+    float previousGpuMs;
     u64 workStartTick;
     u64 stepStartTick;
     u64 stepEndTick;

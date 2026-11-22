@@ -190,7 +190,10 @@ typedef struct {
     u64 fpsWindowStartTick;
     uint32_t fpsWindowFrames;
     float fps;
+    float frameMs;
     float tickMs;
+    float gpuWaitMs;
+    float gpuMs;
     float stepMs;
     float drawMs;
     float audioMs;
@@ -432,6 +435,9 @@ void n3ds_overlayUpdate(const N3DSOverlayTimings* timing, const Runner* runner) 
         stats->fpsWindowFrames = 0u;
     }
 
+    stats->frameMs = n3ds_ticksToMsF(timing->frameIntervalTicks);
+    stats->gpuWaitMs = n3ds_ticksToMsF(timing->gpuWaitTicks);
+    stats->gpuMs = timing->previousGpuMs;
     stats->tickMs = timing->workEndTick >= timing->workStartTick
                         ? n3ds_ticksToMsF(timing->workEndTick - timing->workStartTick)
                         : 0.0f;
@@ -491,7 +497,9 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
         snprintf(text, sizeof(text),
             "Room: %.*s\n"
             "FPS: %.1f\n"
-            "Tick: %.2fms\n"
+            "Frame: %.2fms\n"
+            "CPU: %.2fms\n"
+            "GPU prev/wait: %.2f/%.2fms\n"
             "Step: %.2fms\n"
             "Draw: %.2fms\n"
             "Audio: %.2fms\n"
@@ -502,7 +510,8 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             "  %lux%lu: %lu/%lu\n"
             "Instances: %ld\n"
             "Structs: %ld",
-            roomNameLength, roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
+            roomNameLength, roomName, (double)stats->fps, (double)stats->frameMs,
+            (double)stats->tickMs, (double)stats->gpuMs, (double)stats->gpuWaitMs, (double)stats->stepMs,
             (double)stats->drawMs, (double)stats->audioMs, (unsigned long)trackedAppFreeKb,
             (unsigned long)trackedVramFreeKb, (unsigned long)roomSpeed,
             (unsigned long)residentAtlasPages, (unsigned long)atlasPageCount,
@@ -516,7 +525,9 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
         snprintf(text, sizeof(text),
             "Room: %.*s\n"
             "FPS: %.1f\n"
-            "Tick: %.2fms\n"
+            "Frame: %.2fms\n"
+            "CPU: %.2fms\n"
+            "GPU prev/wait: %.2f/%.2fms\n"
             "Step: %.2fms\n"
             "Draw: %.2fms\n"
             "Audio: %.2fms\n"
@@ -526,7 +537,8 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
             "Atlas: %lu/%lu %lu KB\n"
             "Instances: %ld\n"
             "Structs: %ld",
-            roomNameLength, roomName, (double)stats->fps, (double)stats->tickMs, (double)stats->stepMs,
+            roomNameLength, roomName, (double)stats->fps, (double)stats->frameMs,
+            (double)stats->tickMs, (double)stats->gpuMs, (double)stats->gpuWaitMs, (double)stats->stepMs,
             (double)stats->drawMs, (double)stats->audioMs, (unsigned long)trackedAppFreeKb,
             (unsigned long)trackedVramFreeKb, (unsigned long)roomSpeed,
             (unsigned long)residentAtlasPages, (unsigned long)atlasPageCount,

@@ -15,6 +15,13 @@ bool C3D_drawRoundEdge(Renderer* renderer, int32_t tpagIndex, GMLReal imageX,
 void C3D_drawGlyphGlowRun(Renderer* renderer, const RendererGlyph* glyphs, int32_t count,
     const float alpha[3]);
 void C3D_beginDrawFrame(Renderer* renderer);
+void C3D_deferDrawFrame(Renderer* renderer);
+void C3D_acquireDrawFrame(Renderer* renderer);
+typedef struct {
+    u64 frameWaitTicks;
+    float previousGpuMs;
+} N3DSFrameGpuTimings;
+N3DSFrameGpuTimings C3D_getFrameGpuTimings(const Renderer* renderer);
 void C3D_endDrawFrame(Renderer* renderer);
 N3DSC3DVertex* C3D_beginVertices(
     Renderer* renderer, C3D_Tex* texture, uint32_t vertexCount);

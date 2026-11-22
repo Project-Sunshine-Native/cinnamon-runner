@@ -686,15 +686,15 @@ static void n3ds_appBeginFrame(N3DSApplication* app, Runner* runner, N3DSOverlay
             now = svcGetSystemTick();
         }
     }
-    C3D_FrameBegin(0);
     timing->frameStartTick = svcGetSystemTick();
     u64 deltaTicks = app->lastFrameStartTick != 0u &&
         timing->frameStartTick >= app->lastFrameStartTick
         ? timing->frameStartTick - app->lastFrameStartTick
         : period;
     runner->deltaTime = (GMLReal)((double)deltaTicks * 1000000.0 / (double)SYSCLOCK_ARM11);
+    timing->frameIntervalTicks = deltaTicks;
     app->lastFrameStartTick = timing->frameStartTick;
-    C3D_beginDrawFrame(app->session.renderer);
+    C3D_deferDrawFrame(app->session.renderer);
     timing->workStartTick = svcGetSystemTick();
 }
 
@@ -736,6 +736,8 @@ static void n3ds_appStepFrame(
     timing->stepStartTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
     Runner_step(runner);
     timing->stepEndTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
+    if (app->debugMonitorVisible)
+        timing->stepStartTick += C3D_getFrameGpuTimings(renderer).frameWaitTicks;
     C3D_syncRoom(renderer, runner->currentRoomIndex);
     timing->audioStartTick = app->debugMonitorVisible ? svcGetSystemTick() : 0u;
     runner->audioSystem->vtable->update(
@@ -745,6 +747,7 @@ static void n3ds_appStepFrame(
 
 static void n3ds_appDrawFrame(N3DSApplication* app, Runner* runner, Renderer* renderer,
     const Gen8* gen8, N3DSOverlayTimings* timing) {
+    C3D_acquireDrawFrame(renderer);
     if (!runner->appSurfaceEnabled) {
         runner->applicationWidth = gN3DSGameScreenWidth;
         runner->applicationHeight = N3DS_TOP_SCREEN_HEIGHT;
@@ -857,6 +860,12 @@ static bool n3ds_appRunFrame(N3DSApplication* app) {
 #endif
     n3ds_appStepFrame(app, runner, renderer, &timing);
     n3ds_appDrawFrame(app, runner, renderer, gen8, &timing);
+    if (app->debugMonitorVisible) {
+        N3DSFrameGpuTimings gpuTimings = C3D_getFrameGpuTimings(renderer);
+        timing.workStartTick += gpuTimings.frameWaitTicks;
+        timing.gpuWaitTicks = gpuTimings.frameWaitTicks;
+        timing.previousGpuMs = gpuTimings.previousGpuMs;
+    }
     n3ds_appDrawFrameOverlay(app, runner, renderer, &timing);
     n3ds_appPresentFrame(runner, renderer);
 

@@ -73,6 +73,7 @@ static bool n3ds_c3dReserve(
     N3DSC3DDrawContext* ctx, C3D_Tex* tex, uint32_t vertexCount, bool indexedQuads,
     bool linear) {
     if (ctx == NULL) return false;
+    n3ds_c3dAcquireFrame(ctx);
     if (ctx->forceNearest) linear = false;
     uint32_t batchVertexCapacity = indexedQuads ? ctx->quadCapacity * 4u : ctx->vertexCapacity;
     if (vertexCount > batchVertexCapacity) return false;
@@ -239,6 +240,8 @@ bool n3ds_c3dInit(N3DSC3DDrawContext* ctx, uint32_t maxQuads) {
 void n3ds_c3dBeginFrame(N3DSC3DDrawContext* ctx) {
     if (ctx == NULL) return;
     ctx->frameActive = true;
+    ctx->framePending = false;
+    ctx->frameWaitTicks = 0;
     ctx->vertexCount = 0;
     ctx->streamVertexOffset = 0;
     ctx->submitVertexOffset = 0;
@@ -250,7 +253,17 @@ void n3ds_c3dBeginFrame(N3DSC3DDrawContext* ctx) {
     n3ds_c3dUpdateWritePtr(ctx);
 }
 
+void n3ds_c3dAcquireFrame(N3DSC3DDrawContext* ctx) {
+    if (!ctx->framePending) return;
+    u64 startTick = svcGetSystemTick();
+    C3D_FrameBegin(0);
+    ctx->frameWaitTicks = svcGetSystemTick() - startTick;
+    ctx->previousGpuMs = C3D_GetDrawingTime();
+    ctx->framePending = false;
+}
+
 void n3ds_c3dEndFrame(N3DSC3DDrawContext* ctx) {
+    n3ds_c3dAcquireFrame(ctx);
     n3ds_c3dFlush(ctx);
     n3ds_c3dFlushSubmitRange(ctx);
     C3D_FrameEnd(GX_CMDLIST_FLUSH);
@@ -431,6 +444,7 @@ void n3ds_c3dInvalidateTexture(N3DSC3DDrawContext* ctx, C3D_Tex* tex) {
 
 void n3ds_c3dFrameSplit(N3DSC3DDrawContext* ctx) {
     if (ctx != NULL) {
+        n3ds_c3dAcquireFrame(ctx);
         n3ds_c3dFlushSubmitRange(ctx);
         ctx->boundTexture = NULL;
         ctx->bufferDirty = true;
