@@ -72,6 +72,10 @@ void NativeRoundedgeDraw_register(VMContext* ctx);
 void NativePurplegrassDraw_register(VMContext* ctx);
 void NativeBattlecontrollerDraw_register(VMContext* ctx);
 void NativeWriterDraw_register(VMContext* ctx);
+void NativeChapter2WriterDraw_register(VMContext* ctx);
+void NativeChapter2DwTransitionLineStep_register(VMContext* ctx);
+void NativeChapter2DwTransitionLineDraw_register(VMContext* ctx);
+void NativeChapter2DwTransitionParticleStep_register(VMContext* ctx);
 void NativeCharbox_register(VMContext* ctx);
 void NativeBattlebackDraw_register(VMContext* ctx);
 void NativeSelectionMatrix_register(VMContext* ctx);
@@ -186,5 +190,10 @@ void NativeScripts_registerAll(VMContext* ctx) {
         registerUndertale(ctx);
     } else if (strcmp(title, "DELTARUNE Chapter 1") == 0) {
         registerDeltaruneChapter1(ctx);
+    } else if (strcmp(title, "DELTARUNE Chapter 2") == 0) {
+        NativeChapter2WriterDraw_register(ctx);
+        NativeChapter2DwTransitionLineStep_register(ctx);
+        NativeChapter2DwTransitionLineDraw_register(ctx);
+        NativeChapter2DwTransitionParticleStep_register(ctx);
     }
 }
