@@ -28,6 +28,10 @@ N3DSC3DVertex* C3D_beginVertices(
 void C3D_commitVertices(Renderer* renderer, uint32_t vertexCount);
 void C3D_getViewRect(const Renderer* renderer, int32_t rect[4]);
 bool C3D_getTileCullRect(const Renderer* renderer, float rect[4]);
+bool C3D_drawSpriteShadowPart(Renderer* renderer, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, bool shadowFollows);
+void C3D_drawLineSegments(Renderer* renderer, const float (*segments)[4], uint32_t count,
+    float width, uint32_t color, float alpha, const float clipRect[4]);
 bool C3D_drawPackedTilemap(Renderer* renderer, const RoomLayerTilesData* data,
     const Background* tileset, uint32_t firstX, uint32_t firstY, uint32_t endX,
     uint32_t endY, float offsetX, float offsetY);

@@ -945,9 +945,14 @@ static void drawInstance(Runner* runner, Instance* inst, bool hideDefaultDraw) {
     if (runner->drawEnabled) {
         int32_t ownerObjectIndex = -1;
         int32_t codeId = findEventCodeIdAndOwner(runner, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, &ownerObjectIndex);
-        if (codeId >= 0)
+        if (codeId >= 0) {
+#ifdef PLATFORM_3DS
+            if (hideDefaultDraw &&
+                NativeChapter2Parallax_isDrawObject(runner->vmContext, ownerObjectIndex))
+                return;
+#endif
             Runner_executeResolvedEvent(runner, inst, nullptr, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
-        else if (!hideDefaultDraw && runner->renderer != nullptr)
+        } else if (!hideDefaultDraw && runner->renderer != nullptr)
             Renderer_drawSelf(runner->renderer, inst);
     }
 }
@@ -970,7 +975,8 @@ void Runner_draw(Runner* runner) {
 
     int32_t opaqueDepth = INT32_MAX;
 #ifdef PLATFORM_3DS
-    NativeBattleback_getOpaqueDepth(runner, &opaqueDepth);
+    if (!NativeBattleback_getOpaqueDepth(runner, &opaqueDepth))
+        NativeChapter2Battleback_getOpaqueDepth(runner, &opaqueDepth);
 #endif
 
     // Draw interleaved tiles and instances

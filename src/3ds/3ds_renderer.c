@@ -346,6 +346,13 @@ typedef struct {
 typedef struct N3DSRenderStateSnapshot N3DSRenderStateSnapshot;
 
 typedef struct {
+    bool valid;
+    uint32_t itemIndex;
+    int32_t visibleTop, visibleBottom;
+    int32_t opaqueTop, opaqueBottom;
+} N3DSSpriteRowCache;
+
+typedef struct {
     Renderer base;
     N3DSC3DDrawContext drawContext;
     bool* premultiplyAlphaShaders;
@@ -371,6 +378,7 @@ typedef struct {
     N3DSTpagBinding* tpagBindings;
     uint32_t tpagBindingCount;
     N3DSAtlas atlas;
+    N3DSSpriteRowCache spriteRows[4];
     N3DSRoomManifest roomManifest;
     N3DSRoomTileRange* roomTileRanges;
     uint32_t roomTileRangeCount;
@@ -2122,6 +2130,7 @@ fail:
 }
 
 static void C3D_destroyAtlas(N3DSRenderer* renderer) {
+    memset(renderer->spriteRows, 0, sizeof(renderer->spriteRows));
     if (renderer->atlas.pages != NULL) {
         for (uint32_t i = 0; i < renderer->atlas.pageCount; ++i) {
             if (renderer->atlas.pages[i].active)
@@ -3342,6 +3351,136 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
         rgba);
 }
 
+static uint8_t C3D_textureAlpha(const C3D_Tex* tex, uint32_t x, uint32_t y) {
+    const uint8_t* pixels = tex->data;
+    uint32_t tile = (y >> 3) * (tex->width >> 3) + (x >> 3);
+    if (tex->fmt == GPU_ETC1A4) {
+        uint32_t block = ((y & 4u) >> 1) | ((x & 4u) >> 2);
+        uint32_t pixel = (x & 3u) * 4u + (y & 3u);
+        uint32_t offset = tile * 64u + block * 16u + (pixel >> 1);
+        return ((pixels[offset] >> ((pixel & 1u) * 4u)) & 15u) * 17u;
+    }
+    uint32_t morton = (x & 1u) | ((y & 1u) << 1) |
+        ((x & 2u) << 1) | ((y & 2u) << 2) |
+        ((x & 4u) << 2) | ((y & 4u) << 3);
+    uint32_t pixel = tile * 64u + morton;
+    if (tex->fmt == GPU_RGBA4) return (pixels[pixel * 2u] & 15u) * 17u;
+    if (tex->fmt == GPU_LA4) return (pixels[pixel] & 15u) * 17u;
+    return 255;
+}
+
+static bool C3D_scanSpriteRows(N3DSRenderer* renderer, const N3DSAtlasItem* item,
+    N3DSSpriteRowCache* rows) {
+    if (item->width == 0 || item->width > 1024 || item->height == 0 ||
+        item->height > 1024 || item->resizeDivisor != 1 ||
+        item->fragmentCount == 0 ||
+        item->fragmentStart >= renderer->atlas.fragmentCount ||
+        item->fragmentCount > renderer->atlas.fragmentCount - item->fragmentStart)
+        return false;
+
+    rows->visibleTop = item->height;
+    rows->visibleBottom = 0;
+    rows->opaqueTop = rows->opaqueBottom = 0;
+    int32_t opaqueStart = 0;
+    for (uint32_t y = 0; y < item->height; ++y) {
+        uint8_t alpha[1024] = {0};
+        for (uint32_t i = 0; i < item->fragmentCount; ++i) {
+            const N3DSAtlasFragment* fragment =
+                &renderer->atlas.fragments[item->fragmentStart + i];
+            if (y < fragment->sourceY || y >= (uint32_t)fragment->sourceY + fragment->height)
+                continue;
+            if (fragment->pageIndex >= renderer->atlas.pageCount ||
+                (uint32_t)fragment->sourceX + fragment->width > item->width ||
+                !C3D_loadRoomWantedAtlasPage(renderer, fragment->pageIndex, NULL))
+                return false;
+            const N3DSAtlasPage* page = &renderer->atlas.pages[fragment->pageIndex];
+            const C3D_Tex* tex = &page->tex;
+            if (page->inVram || (tex->fmt != GPU_RGBA4 && tex->fmt != GPU_LA4 &&
+                tex->fmt != GPU_L4 && tex->fmt != GPU_ETC1 && tex->fmt != GPU_ETC1A4) ||
+                (uint32_t)fragment->x + fragment->width > tex->width ||
+                (uint32_t)fragment->y + fragment->height > tex->height)
+                return false;
+            uint32_t textureY = fragment->y + y - fragment->sourceY;
+            for (uint32_t x = 0; x < fragment->width; ++x) {
+                uint8_t sample = C3D_textureAlpha(tex, fragment->x + x, textureY);
+                if (sample > alpha[fragment->sourceX + x])
+                    alpha[fragment->sourceX + x] = sample;
+            }
+        }
+        uint8_t minimum = 255, maximum = 0;
+        for (uint32_t x = 0; x < item->width; ++x) {
+            if (alpha[x] < minimum) minimum = alpha[x];
+            if (alpha[x] > maximum) maximum = alpha[x];
+        }
+        if (maximum != 0) {
+            if ((int32_t)y < rows->visibleTop) rows->visibleTop = y;
+            rows->visibleBottom = y + 1;
+        }
+        if (minimum != 255) opaqueStart = y + 1;
+        else if ((int32_t)y + 1 - opaqueStart > rows->opaqueBottom - rows->opaqueTop) {
+            rows->opaqueTop = opaqueStart;
+            rows->opaqueBottom = y + 1;
+        }
+    }
+    return true;
+}
+
+bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, bool shadowFollows) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSRenderState* state = &renderer->renderState;
+    N3DSAtlasItem* item;
+    if (base->texFilter || !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
+        state->blendSrc != bm_src_alpha || state->blendDst != bm_inv_src_alpha ||
+        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_inv_src_alpha ||
+        (shadowFollows && alpha != 1.0f) ||
+        (state->alphaTestEnabled && state->alphaTestRef == 255) ||
+        !C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item))
+        return false;
+    const TexturePageItem* tpag = &base->dataWin->tpag.items[tpagIndex];
+    if (tpag->targetX != 0 || tpag->targetY != 0 ||
+        item->width != tpag->sourceWidth || item->height != tpag->sourceHeight ||
+        item->width != tpag->boundingWidth || item->height != tpag->boundingHeight)
+        return false;
+
+    uint32_t itemIndex = renderer->tpagBindings[tpagIndex].atlasItemIndex;
+    N3DSSpriteRowCache* rows = NULL;
+    for (uint32_t i = 0; i < 4; ++i) {
+        if (renderer->spriteRows[i].valid && renderer->spriteRows[i].itemIndex == itemIndex) {
+            rows = &renderer->spriteRows[i];
+            break;
+        }
+    }
+    if (rows == NULL) {
+        for (uint32_t i = 0; i < 4; ++i) {
+            if (!renderer->spriteRows[i].valid) {
+                rows = &renderer->spriteRows[i];
+                break;
+            }
+        }
+        if (rows == NULL || !C3D_scanSpriteRows(renderer, item, rows)) return false;
+        rows->itemIndex = itemIndex;
+        rows->valid = true;
+    }
+
+    float top = rows->visibleTop;
+    float bottom = fminf(height, rows->visibleBottom);
+    if (top >= bottom) return true;
+    float hiddenTop = bottom;
+    float hiddenBottom = bottom;
+    if (shadowFollows && rows->opaqueTop < rows->opaqueBottom) {
+        hiddenTop = fmaxf(top, fminf(bottom, rows->opaqueTop + 8));
+        hiddenBottom = fmaxf(top, fminf(bottom, rows->opaqueBottom + 8));
+    }
+    if (top < hiddenTop)
+        C3D_drawSpritePart(base, tpagIndex, 0, top, width, hiddenTop - top,
+            x, y + top, 1, 1, 0, 0, 0, color, alpha);
+    if (hiddenBottom < bottom)
+        C3D_drawSpritePart(base, tpagIndex, 0, hiddenBottom, width, bottom - hiddenBottom,
+            x, y + hiddenBottom, 1, 1, 0, 0, 0, color, alpha);
+    return true;
+}
+
 bool C3D_drawPackedTilemap(Renderer* base, const RoomLayerTilesData* data,
     const Background* tileset, uint32_t firstX, uint32_t firstY, uint32_t endX,
     uint32_t endY, float offsetX, float offsetY) {
@@ -3817,14 +3956,10 @@ static void C3D_drawLinePoint(Renderer* base, N3DSRenderer* renderer, N3DSVec2 p
         (N3DSVec2){opposite.x - point.x, opposite.y - point.y}, C3D_makeColor(color, alpha));
 }
 
-static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, float y2,
-    float width, uint32_t color1, uint32_t color2, float alpha) {
-    assert(base != NULL);
+static void C3D_drawPreparedLine(Renderer* base, float x1, float y1, float x2, float y2,
+    float width, uint32_t color1, float alpha, uint32_t rgba1, uint32_t rgba2,
+    float minimumWidth, bool hostViewProjectionActive, bool renderSpace) {
     N3DSRenderer* renderer = (N3DSRenderer*)base;
-    bool hostViewProjectionActive = renderer->hostViewProjectionActive;
-    bool renderSpace = renderer->screenTransformActive || hostViewProjectionActive;
-    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
-    width = fmaxf(width, minimumWidth);
     bool pixelSpace = renderSpace ||
         renderer->currentTargetSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER;
     if (!renderSpace && renderer->viewCullActive) {
@@ -3852,9 +3987,43 @@ static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, floa
         for (uint32_t i = 0u; i < 4u; ++i)
             C3D_unprojectHost(&renderer->screenTransform, &quad[i]);
     }
+    n3ds_c3dLineQuad(&renderer->drawContext, quad, rgba1, rgba2);
+}
+
+static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, float y2,
+    float width, uint32_t color1, uint32_t color2, float alpha) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    bool hostProjection = renderer->hostViewProjectionActive;
+    bool renderSpace = renderer->screenTransformActive || hostProjection;
+    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
     uint32_t rgba1 = C3D_makeColor(color1, alpha);
     uint32_t rgba2 = color1 == color2 ? rgba1 : C3D_makeColor(color2, alpha);
-    n3ds_c3dLineQuad(&renderer->drawContext, quad, rgba1, rgba2);
+    C3D_drawPreparedLine(base, x1, y1, x2, y2, fmaxf(width, minimumWidth),
+        color1, alpha, rgba1, rgba2, minimumWidth, hostProjection, renderSpace);
+}
+
+void C3D_drawLineSegments(Renderer* base, const float (*segments)[4], uint32_t count,
+    float width, uint32_t color, float alpha, const float clipRect[4]) {
+    if (count == 0) return;
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    bool hostProjection = renderer->hostViewProjectionActive;
+    bool renderSpace = renderer->screenTransformActive || hostProjection;
+    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
+    width = fmaxf(width, minimumWidth);
+    uint32_t rgba = C3D_makeColor(color, alpha);
+    float margin = width * 2.0f + 2.0f;
+    for (uint32_t i = 0; i < count; ++i) {
+        float x1 = segments[i][0], y1 = segments[i][1];
+        float x2 = segments[i][2], y2 = segments[i][3];
+        if (clipRect != NULL && !renderSpace &&
+            !C3D_clipLineToRect(&x1, &y1, &x2, &y2, clipRect[0] - margin,
+                clipRect[1] - margin, clipRect[2] + margin, clipRect[3] + margin))
+            continue;
+        C3D_drawPreparedLine(base, x1, y1, x2, y2, width, color, alpha, rgba, rgba, minimumWidth,
+            hostProjection, renderSpace);
+    }
 }
 
 static void C3D_drawLine(Renderer* base, float x1, float y1, float x2, float y2,
