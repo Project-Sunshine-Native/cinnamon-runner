@@ -77,6 +77,8 @@ void NativeChapter2DwTransitionLineStep_register(VMContext* ctx);
 void NativeChapter2DwTransitionLineDraw_register(VMContext* ctx);
 void NativeChapter2DwTransitionParticleStep_register(VMContext* ctx);
 void NativeChapter2CaterpillarEndStep_register(VMContext* ctx);
+void NativeChapter2HangplugDraw_register(VMContext* ctx);
+void NativeChapter2CyberWallLightsDraw_register(VMContext* ctx);
 void NativeCharbox_register(VMContext* ctx);
 void NativeBattlebackDraw_register(VMContext* ctx);
 void NativeSelectionMatrix_register(VMContext* ctx);
@@ -197,5 +199,7 @@ void NativeScripts_registerAll(VMContext* ctx) {
         NativeChapter2DwTransitionLineDraw_register(ctx);
         NativeChapter2DwTransitionParticleStep_register(ctx);
         NativeChapter2CaterpillarEndStep_register(ctx);
+        NativeChapter2HangplugDraw_register(ctx);
+        NativeChapter2CyberWallLightsDraw_register(ctx);
     }
 }
