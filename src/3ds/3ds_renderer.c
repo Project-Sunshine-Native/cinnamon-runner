@@ -55,9 +55,8 @@ static uint32_t C3D_addBytes(uint32_t a, uint32_t b) {
 }
 
 static bool C3D_fcramOverBudget(uint32_t residentFcramBytes, uint32_t incomingBytes) {
-    uint32_t reserveBytes = n3ds_getTextureReserveBytes();
     uint32_t projectedBytes = C3D_addBytes(residentFcramBytes, incomingBytes);
-    uint32_t projectedReserve = C3D_addBytes(reserveBytes, incomingBytes);
+    uint32_t projectedReserve = C3D_addBytes(N3DS_TEXTURE_FCRAM_RESERVE_BYTES, incomingBytes);
     if (projectedBytes > n3ds_getTextureCacheBytes()) return true;
     if (n3ds_getFreeLinearBytes() < projectedReserve) return true;
     return n3ds_getFreeHeapBudgetBytes() < projectedReserve;
