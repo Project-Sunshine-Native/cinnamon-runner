@@ -496,7 +496,8 @@ static void C3D_evictAtlasPages(
 static bool C3D_atlasItemIsDrawable(const N3DSRenderer* renderer, uint32_t itemIndex);
 static void C3D_setTextureFiltering(C3D_Tex* tex, bool linear);
 static void C3D_drawTextInternal(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, uint32_t color, float alpha, float lineSeparation);
+    float xscale, float yscale, float angleDeg, const uint32_t colors[4], float alpha,
+    float lineSeparation);
 
 static void C3D_safeFrameSplit(N3DSRenderer* renderer) {
     if (renderer->currentTargetSurfaceId == INT32_MIN) return;
@@ -2791,6 +2792,61 @@ static void C3D_emitAtlasFragment(N3DSRenderer* renderer, const N3DSAtlasItem* i
         clipped.left, clipped.top, clipped.right, clipped.bottom, rgba, rgba, rgba, rgba);
 }
 
+static uint32_t C3D_gradientColor(const uint32_t colors[4], float x, float y) {
+    uint32_t top = (uint32_t)Color_lerp(colors[0], colors[1], x);
+    uint32_t bottom = (uint32_t)Color_lerp(colors[2], colors[3], x);
+    return (uint32_t)Color_lerp(top, bottom, y) | (colors[0] & 0xFF000000u);
+}
+
+static void C3D_emitGlyphAtlasGradient(N3DSRenderer* renderer, const N3DSAtlasItem* item,
+    N3DSAtlasSource src, const N3DSDrawMapper* mapper, N3DSAtlasDest dst,
+    const uint32_t colors[4]) {
+    if (src.width <= 0 || src.height <= 0 || item->fragmentCount == 0u) return;
+
+    for (uint32_t i = 0; i < item->fragmentCount; ++i) {
+        uint32_t index = item->fragmentStart + i;
+        if (index >= renderer->atlas.fragmentCount) break;
+        const N3DSAtlasFragment* fragment = &renderer->atlas.fragments[index];
+        float left = fmaxf(src.x, (float)fragment->sourceX);
+        float top = fmaxf(src.y, (float)fragment->sourceY);
+        float right = fminf(src.x + src.width, (float)fragment->sourceX + fragment->width);
+        float bottom = fminf(src.y + src.height, (float)fragment->sourceY + fragment->height);
+        if (left >= right || top >= bottom) continue;
+
+        float x0 = (left - src.x) / src.width;
+        float y0 = (top - src.y) / src.height;
+        float x1 = (right - src.x) / src.width;
+        float y1 = (bottom - src.y) / src.height;
+        N3DSAtlasDest clipped = {
+            dst.left + (dst.right - dst.left) * x0,
+            dst.top + (dst.bottom - dst.top) * y0,
+            dst.left + (dst.right - dst.left) * x1,
+            dst.top + (dst.bottom - dst.top) * y1,
+        };
+        if (!C3D_mappedRectVisible(renderer, mapper,
+                clipped.left, clipped.top, clipped.right, clipped.bottom))
+            continue;
+        if (fragment->pageIndex >= renderer->atlas.pageCount ||
+            !C3D_loadRoomWantedAtlasPage(renderer, fragment->pageIndex, NULL))
+            continue;
+
+        N3DSAtlasPage* page = &renderer->atlas.pages[fragment->pageIndex];
+        N3DSUVRect region;
+        C3D_getAtlasFragmentRegion(item, fragment, page, &region);
+        uint32_t c1 = colors[0], c2 = colors[1], c3 = colors[2], c4 = colors[3];
+        if (x0 != 0.0f || y0 != 0.0f || x1 != 1.0f || y1 != 1.0f) {
+            c1 = C3D_gradientColor(colors, x0, y0);
+            c2 = C3D_gradientColor(colors, x1, y0);
+            c3 = C3D_gradientColor(colors, x0, y1);
+            c4 = C3D_gradientColor(colors, x1, y1);
+        }
+        C3D_emitMappedQuadSprite(renderer, &page->tex, &region, mapper,
+            left - fragment->sourceX, top - fragment->sourceY,
+            right - fragment->sourceX, bottom - fragment->sourceY,
+            clipped.left, clipped.top, clipped.right, clipped.bottom, c1, c2, c3, c4);
+    }
+}
+
 static void C3D_emitAtlas(N3DSRenderer* renderer, const N3DSAtlasItem* item,
     N3DSAtlasSource src, const N3DSDrawMapper* mapper, N3DSAtlasDest dst, uint32_t rgba) {
     if (item == NULL || mapper == NULL || src.width <= 0 || src.height <= 0)
@@ -4048,7 +4104,7 @@ static bool C3D_resolveFontState(
 
 static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
     const N3DSFontState* state, FontGlyph* glyph, float cursorX, float cursorY,
-    const N3DSDrawMapper* mapper, uint32_t rgba) {
+    const N3DSDrawMapper* mapper, uint32_t rgba, const uint32_t* colors) {
     if (dataWin == NULL || state == NULL || glyph == NULL || glyph->sourceWidth == 0u ||
         glyph->sourceHeight == 0u)
         return false;
@@ -4087,6 +4143,18 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
 
     float right = left + (float)srcW;
     float bottom = top + (float)srcH;
+    if (colors != NULL) {
+        N3DSAtlasItem* item = state->atlasItem;
+        if (item == NULL && (uint32_t)tpagIndex < renderer->tpagBindingCount &&
+            renderer->tpagBindings[tpagIndex].source == N3DS_TPAG_SOURCE_ATLAS)
+            (void)C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item);
+        if (item != NULL) {
+            C3D_emitGlyphAtlasGradient(renderer, item,
+                (N3DSAtlasSource){srcX, srcY, srcW, srcH}, mapper,
+                (N3DSAtlasDest){left, top, right, bottom}, colors);
+            return true;
+        }
+    }
     if (state->atlasItem != NULL) {
         C3D_emitAtlas(renderer, state->atlasItem,
             (N3DSAtlasSource){srcX, srcY, srcW, srcH}, mapper,
@@ -4100,6 +4168,10 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
         return true;
     }
 
+    uint32_t c1 = colors != NULL ? colors[0] : rgba;
+    uint32_t c2 = colors != NULL ? colors[1] : rgba;
+    uint32_t c3 = colors != NULL ? colors[2] : rgba;
+    uint32_t c4 = colors != NULL ? colors[3] : rgba;
     C3D_Tex* tex = NULL;
     N3DSUVRect* region = NULL;
     if (!C3D_resolveTextureRegion(renderer, tpagIndex, &tex, &region)) return false;
@@ -4112,18 +4184,19 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
                 &dataWin->tpag.items[tpagIndex], &renderer->surfaces[surfaceID]);
             C3D_emitMappedQuadSprite(renderer, tex, &contentRegion, mapper, (float)srcX,
                 (float)srcY, (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom,
-                rgba, rgba, rgba, rgba);
+                c1, c2, c3, c4);
             return true;
         }
     }
     C3D_emitMappedQuadSprite(renderer, tex, region, mapper, (float)srcX, (float)srcY,
-        (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom, rgba, rgba, rgba,
-        rgba);
+        (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom, c1, c2, c3,
+        c4);
     return true;
 }
 
 static void C3D_drawTextInternal(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, uint32_t color, float alpha, float lineSeparation) {
+    float xscale, float yscale, float angleDeg, const uint32_t colors[4], float alpha,
+    float lineSeparation) {
     if (text == NULL || alpha <= 0.0f) return;
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     DataWin* dataWin = base->dataWin;
@@ -4163,7 +4236,16 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
         Matrix4f_setTransform2D(&transform, x, y, scaleX, scaleY, -angleDeg * (float)M_PI / 180.0f);
         C3D_mapInitAffine(&mapper, &transform);
     }
-    uint32_t rgba = C3D_makeColor(color, alpha);
+    uint32_t rgba = C3D_makeColor(colors[0], alpha);
+    bool horizontalGradient = colors[0] != colors[1] || colors[2] != colors[3];
+    bool gradient = horizontalGradient || colors[0] != colors[2];
+    uint32_t gradientColors[4];
+    if (gradient) {
+        gradientColors[0] = rgba;
+        gradientColors[1] = C3D_makeColor(colors[1], alpha);
+        gradientColors[2] = C3D_makeColor(colors[3], alpha);
+        gradientColors[3] = C3D_makeColor(colors[2], alpha);
+    }
 
     float cursorY = valignOffset - (float)font->ascenderOffset;
     int32_t lineStart = 0;
@@ -4172,13 +4254,14 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
         while (lineEnd < textLen && !TextUtils_isNewlineChar(text[lineEnd]))
             lineEnd++;
         int32_t lineLen = lineEnd - lineStart;
-        float lineWidth = (base->drawHalign == 1 || base->drawHalign == 2)
+        float lineWidth = (base->drawHalign == 1 || base->drawHalign == 2 || horizontalGradient)
             ? TextUtils_measureLineWidth(font, text + lineStart, lineLen) : 0.0f;
         float cursorX = 0.0f;
         if (base->drawHalign == 1)
             cursorX = -lineWidth * 0.5f;
         else if (base->drawHalign == 2)
             cursorX = -lineWidth;
+        float gradientX = 0.0f;
 
         int32_t pos = 0;
         bool hasCh = pos < lineLen;
@@ -4189,10 +4272,24 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
             bool hasNext = pos < lineLen;
             if (hasNext) nextCh = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
             if (glyph != NULL) {
-                bool drew = C3D_drawGlyph(
-                    renderer, dataWin, &state, glyph, cursorX, cursorY, &mapper, rgba);
-                cursorX += (float)glyph->shift;
-                if (drew && hasNext) cursorX += TextUtils_getKerningOffset(glyph, nextCh);
+                float advance = (float)glyph->shift;
+                if (horizontalGradient) {
+                    float left = lineWidth > 0.0f ? gradientX / lineWidth : 0.0f;
+                    float right = lineWidth > 0.0f ? (gradientX + advance) / lineWidth : 1.0f;
+                    gradientColors[0] = C3D_makeColor(Color_lerp(colors[0], colors[1], left), alpha);
+                    gradientColors[1] = C3D_makeColor(Color_lerp(colors[0], colors[1], right), alpha);
+                    gradientColors[2] = C3D_makeColor(Color_lerp(colors[3], colors[2], left), alpha);
+                    gradientColors[3] = C3D_makeColor(Color_lerp(colors[3], colors[2], right), alpha);
+                }
+                bool drew = C3D_drawGlyph(renderer, dataWin, &state, glyph, cursorX,
+                    cursorY, &mapper, rgba, gradient ? gradientColors : NULL);
+                cursorX += advance;
+                gradientX += advance;
+                if (drew && hasNext) {
+                    float kern = TextUtils_getKerningOffset(glyph, nextCh);
+                    cursorX += kern;
+                    gradientX += kern;
+                }
             }
             ch = nextCh;
             hasCh = hasNext;
@@ -4206,7 +4303,9 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
 static void C3D_drawText(Renderer* base, const char* text, float x, float y, float xscale,
     float yscale, float angleDeg, float lineSeparation) {
     assert(base != NULL);
-    C3D_drawTextInternal(base, text, x, y, xscale, yscale, angleDeg, base->drawColor,
+    uint32_t colors[4] = {
+        base->drawColor, base->drawColor, base->drawColor, base->drawColor};
+    C3D_drawTextInternal(base, text, x, y, xscale, yscale, angleDeg, colors,
         base->drawAlpha, lineSeparation);
 }
 
@@ -4226,7 +4325,27 @@ static void C3D_drawGlyphFast(Renderer* base, uint16_t character, float x, float
     C3D_mapInitAxis(&mapper, x, y, xscale * font->scaleX, yscale * font->scaleY);
     uint32_t rgba = C3D_makeColor(base->drawColor, base->drawAlpha);
     (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
-        -(float)font->ascenderOffset, &mapper, rgba);
+        -(float)font->ascenderOffset, &mapper, rgba, NULL);
+}
+
+void C3D_drawGradientGlyph(Renderer* base, const RendererGlyph* glyph, uint32_t bottomColor) {
+    if (base->drawAlpha <= 0.0f) return;
+    int32_t fontIndex = base->drawFont;
+    if (fontIndex < 0 || (uint32_t)fontIndex >= base->dataWin->font.count) return;
+
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    Font* font = &base->dataWin->font.fonts[fontIndex];
+    FontGlyph* fontGlyph = TextUtils_findGlyph(font, glyph->character);
+    N3DSFontState state;
+    if (fontGlyph == NULL || !C3D_resolveFontState(renderer, base->dataWin, font, &state)) return;
+
+    N3DSDrawMapper mapper;
+    C3D_mapInitAxis(&mapper, glyph->x, glyph->y, font->scaleX, font->scaleY);
+    uint32_t top = C3D_makeColor(glyph->color, base->drawAlpha);
+    uint32_t bottom = C3D_makeColor(bottomColor, base->drawAlpha);
+    uint32_t colors[4] = {top, top, bottom, bottom};
+    (void)C3D_drawGlyph(renderer, base->dataWin, &state, fontGlyph, 0.0f,
+        -(float)font->ascenderOffset, &mapper, top, colors);
 }
 
 static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, int32_t count,
@@ -4251,7 +4370,7 @@ static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, in
         C3D_mapInitAxis(&mapper, glyphs[i].x, glyphs[i].y, scaleX, scaleY);
         uint32_t rgba = C3D_makeColor(glyphs[i].color, base->drawAlpha);
         (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
-            cursorY, &mapper, rgba);
+            cursorY, &mapper, rgba, NULL);
     }
 }
 
@@ -4280,17 +4399,19 @@ void C3D_drawGlyphGlowRun(Renderer* base, const RendererGlyph* glyphs, int32_t c
             if (alpha[group] <= 0.0f) continue;
             N3DSDrawMapper mapper;
             C3D_mapInitAxis(&mapper, glyphs[pass].x, glyphs[pass].y, font->scaleX, font->scaleY);
-            (void)C3D_drawGlyph(renderer, dataWin, &state, glyph, 0.0f, cursorY, &mapper, rgba[group]);
+            (void)C3D_drawGlyph(renderer, dataWin, &state, glyph, 0.0f, cursorY, &mapper,
+                rgba[group], NULL);
         }
     }
 }
 
 static void C3D_drawTextColor(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, int32_t c1, MAYBE_UNUSED int32_t c2,
-    MAYBE_UNUSED int32_t c3, MAYBE_UNUSED int32_t c4, float alpha, float lineSeparation) {
+    float xscale, float yscale, float angleDeg, int32_t c1, int32_t c2,
+    int32_t c3, int32_t c4, float alpha, float lineSeparation) {
     assert(base != NULL);
+    uint32_t colors[4] = {(uint32_t)c1, (uint32_t)c2, (uint32_t)c3, (uint32_t)c4};
     C3D_drawTextInternal(
-        base, text, x, y, xscale, yscale, angleDeg, (uint32_t)c1, alpha, lineSeparation);
+        base, text, x, y, xscale, yscale, angleDeg, colors, alpha, lineSeparation);
 }
 
 static void C3D_flush(MAYBE_UNUSED Renderer* base) {

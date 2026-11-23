@@ -348,7 +348,8 @@ static void writerDrawOutlined(Renderer* renderer, int32_t count) {
             renderer->drawAlpha = tinted ? 0.3f : 1.0f;
             renderer->vtable->drawGlyphRun(renderer, shadow, 1, 1.0f, 1.0f);
             renderer->drawAlpha = tinted ? 1.0f : alpha;
-            renderer->vtable->drawGlyphRun(renderer, shadow + 1, 1, 1.0f, 1.0f);
+            if (tinted) C3D_drawGradientGlyph(renderer, shadow + 1, writerOutlines[i].ink);
+            else renderer->vtable->drawGlyphRun(renderer, shadow + 1, 1, 1.0f, 1.0f);
             ++i;
         }
         renderer->drawAlpha = alpha;
