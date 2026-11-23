@@ -93,6 +93,9 @@ void NativeChapter2WerewireDraw_register(VMContext* ctx);
 void NativeChapter2WerewireLaserSquareStep_register(VMContext* ctx);
 void NativeChapter2WerewireLaserCircleStep_register(VMContext* ctx);
 void NativeChapter2ParallaxerCyberDraw_register(VMContext* ctx);
+#ifdef PLATFORM_3DS
+void NativeChapter2ParallaxerCyber2Draw_register(VMContext* ctx);
+#endif
 void NativeChapter2CyberBackgroundDraw_register(VMContext* ctx);
 void NativeChapter2ParallaxerLayerDraw_register(VMContext* ctx);
 void NativeSelectionMatrix_register(VMContext* ctx);
@@ -227,6 +230,9 @@ void NativeScripts_registerAll(VMContext* ctx) {
         NativeChapter2WerewireLaserSquareStep_register(ctx);
         NativeChapter2WerewireLaserCircleStep_register(ctx);
         NativeChapter2ParallaxerCyberDraw_register(ctx);
+#ifdef PLATFORM_3DS
+        NativeChapter2ParallaxerCyber2Draw_register(ctx);
+#endif
         NativeChapter2CyberBackgroundDraw_register(ctx);
         NativeChapter2ParallaxerLayerDraw_register(ctx);
     }
