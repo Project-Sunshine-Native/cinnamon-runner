@@ -611,10 +611,23 @@ static void n3ds_appPlaytimeHook(APT_HookType hook, void* context) {
     else n3ds_appResumePlaytime(app);
 }
 
+extern gxCmdQueue_s __C3D_Context;
+
+static void n3ds_appGrowGxQueue(void) {
+    gxCmdQueue_s* queue = &__C3D_Context;
+    if (queue->entries == NULL || queue->maxEntries != 32u || queue->numEntries != 0u) return;
+    gxCmdEntry_s* grown = (gxCmdEntry_s*)malloc(sizeof(gxCmdEntry_s) * N3DS_GX_QUEUE_ENTRIES);
+    if (grown == NULL) return;
+    free(queue->entries);
+    queue->entries = grown;
+    queue->maxEntries = N3DS_GX_QUEUE_ENTRIES;
+}
+
 static bool n3ds_appInitCitro(void) {
     bool citroReady = false;
     bool c3dInitialized = C3D_Init(N3DS_C3D_COMMAND_BUFFER_SIZE);
     if (c3dInitialized) {
+        n3ds_appGrowGxQueue();
         citroReady = C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
         if (citroReady) C2D_Prepare();
     }

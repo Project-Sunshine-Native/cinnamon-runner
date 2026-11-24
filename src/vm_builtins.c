@@ -13172,6 +13172,33 @@ static RValue builtin_surface_resize(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     return RValue_makeUndefined();
 }
 
+uint8_t* gSurfacePixelCachePixels = nullptr;
+static int32_t gSurfacePixelCacheId = -1;
+static int32_t gSurfacePixelCacheW = 0;
+static int32_t gSurfacePixelCacheH = 0;
+
+void VM_surfacePixelCacheClear(void) {
+    free(gSurfacePixelCachePixels);
+    gSurfacePixelCachePixels = nullptr;
+    gSurfacePixelCacheId = -1;
+}
+
+static const uint8_t* surfacePixelsCached(Runner* runner, int32_t surfaceId, int32_t w, int32_t h) {
+    if (gSurfacePixelCachePixels != nullptr && gSurfacePixelCacheId == surfaceId && gSurfacePixelCacheW == w && gSurfacePixelCacheH == h)
+        return gSurfacePixelCachePixels;
+    VM_surfacePixelCacheClear();
+    uint8_t* pixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
+    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, pixels)) {
+        free(pixels);
+        return nullptr;
+    }
+    gSurfacePixelCachePixels = pixels;
+    gSurfacePixelCacheId = surfaceId;
+    gSurfacePixelCacheW = w;
+    gSurfacePixelCacheH = h;
+    return pixels;
+}
+
 static RValue builtin_surface_getpixel(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
 
@@ -13182,14 +13209,10 @@ static RValue builtin_surface_getpixel(VMContext* ctx, RValue* args, MAYBE_UNUSE
     int32_t h = (int32_t) Renderer_getSurfaceHeight(runner->renderer, surfaceId);
     if (x < 0 || x >= w || y < 0 || y >= h) return RValue_makeInt32(0);
 
-    uint8_t* surfacePixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
-    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, surfacePixels)) {
-        free(surfacePixels);
-        return RValue_makeInt32(0);
-    }
-    uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
+    const uint8_t* surfacePixels = surfacePixelsCached(runner, surfaceId, w, h);
+    if (surfacePixels == nullptr) return RValue_makeInt32(0);
+    const uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
     uint32_t bgr = p[0] | (p[1] << 8) | (p[2] << 16);
-    free(surfacePixels);
 
     return RValue_makeInt32(bgr);
 }
@@ -13203,14 +13226,10 @@ static RValue builtin_surface_getpixel_ext(VMContext* ctx, RValue* args, MAYBE_U
     int32_t h = (int32_t) Renderer_getSurfaceHeight(runner->renderer, surfaceId);
     if (x < 0 || x >= w || y < 0 || y >= h) return RValue_makeReal(0.0);
 
-    uint8_t* surfacePixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
-    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, surfacePixels)) {
-        free(surfacePixels);
-        return RValue_makeReal(0.0);
-    }
-    uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
+    const uint8_t* surfacePixels = surfacePixelsCached(runner, surfaceId, w, h);
+    if (surfacePixels == nullptr) return RValue_makeReal(0.0);
+    const uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
     uint32_t abgr = p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
-    free(surfacePixels);
 
     return RValue_makeReal((GMLReal)abgr);
 }

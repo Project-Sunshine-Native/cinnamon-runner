@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <3ds/allocator/vram.h>
+#include <3ds/gpu/gx.h>
 #include <stb/ds/stb_ds.h>
 #define N3DS_TOP_WIDTH 400
 #define N3DS_TOP_HEIGHT 240
@@ -2422,8 +2423,17 @@ static void C3D_applyBlendState(N3DSRenderer* renderer) {
         state->blendEnabled ? C3D_blendFactorFromGml(state->blendDstAlpha) : GPU_ZERO;
     n3ds_c3dSetBlend(&renderer->drawContext, state->blendEnabled, state->blendEq,
         state->blendEq, srcColor, dstColor, srcAlpha, dstAlpha);
-    n3ds_c3dSetAlphaTest(
-        &renderer->drawContext, state->alphaTestEnabled, GPU_GREATER, state->alphaTestRef);
+    bool transparentIsNoOp = state->blendEnabled && state->blendEq == GPU_BLEND_ADD &&
+        (srcColor == GPU_SRC_ALPHA || (srcColor == GPU_ONE && state->premultiplyAlpha)) &&
+        (dstColor == GPU_ONE_MINUS_SRC_ALPHA || dstColor == GPU_ONE) &&
+        (srcAlpha == GPU_SRC_ALPHA || srcAlpha == GPU_ONE || srcAlpha == GPU_ZERO) &&
+        (dstAlpha == GPU_ONE_MINUS_SRC_ALPHA || dstAlpha == GPU_ONE);
+    if (state->alphaTestEnabled) {
+        n3ds_c3dSetAlphaTest(
+            &renderer->drawContext, true, GPU_GREATER, state->alphaTestRef);
+    } else {
+        n3ds_c3dSetAlphaTest(&renderer->drawContext, transparentIsNoOp, GPU_GREATER, 0);
+    }
     n3ds_c3dSetColorMask(&renderer->drawContext, state->colorWriteR, state->colorWriteG,
         state->colorWriteB, state->colorWriteA);
 }
@@ -5469,6 +5479,45 @@ static void C3D_surfaceCopy(Renderer* base, int32_t destSurfaceID, int32_t destX
     C3D_restoreRenderState(renderer, &savedState, destSurfaceID);
 }
 
+static const uint8_t C3D_mortonLut[64] = {
+     0,  1,  4,  5, 16, 17, 20, 21,
+     2,  3,  6,  7, 18, 19, 22, 23,
+     8,  9, 12, 13, 24, 25, 28, 29,
+    10, 11, 14, 15, 26, 27, 30, 31,
+    32, 33, 36, 37, 48, 49, 52, 53,
+    34, 35, 38, 39, 50, 51, 54, 55,
+    40, 41, 44, 45, 56, 57, 60, 61,
+    42, 43, 46, 47, 58, 59, 62, 63};
+
+static void C3D_untileRGBA8(const uint32_t* src, uint32_t* dst, uint32_t width, uint32_t height) {
+    uint32_t tilesPerRow = width / 8u;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t tile = (y >> 3) * tilesPerRow + (x >> 3);
+            dst[y * width + x] = src[tile * 64u + C3D_mortonLut[((y & 7u) << 3) | (x & 7u)]];
+        }
+    }
+}
+
+static void C3D_untileRGBA4(const uint16_t* src, uint32_t* dst, uint32_t width, uint32_t height) {
+    uint32_t tilesPerRow = width / 8u;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t tile = (y >> 3) * tilesPerRow + (x >> 3);
+            uint16_t v = src[tile * 64u + C3D_mortonLut[((y & 7u) << 3) | (x & 7u)]];
+            uint32_t r = (v >> 12) & 0xFu, g = (v >> 8) & 0xFu, b = (v >> 4) & 0xFu, a = v & 0xFu;
+            dst[y * width + x] = ((r * 17u) << 24) | ((g * 17u) << 16) | ((b * 17u) << 8) | (a * 17u);
+        }
+    }
+}
+
+static inline void C3D_copyPixelToRGBA(uint8_t* dst, const uint8_t* src) {
+    dst[0] = src[3];
+    dst[1] = src[2];
+    dst[2] = src[1];
+    dst[3] = src[0];
+}
+
 static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* outRGBA) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
@@ -5493,12 +5542,34 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
     uint16_t transferH = surface->target != NULL && surface->target->frameBuf.height > 0
         ? surface->target->frameBuf.height
         : surface->texHeight;
-    C3D_SyncDisplayTransfer((u32*)colorBuf, GX_BUFFER_DIM(transferW, transferH), (u32*)temp,
-        GX_BUFFER_DIM(surface->texWidth, surface->texHeight),
-        GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
-            GX_TRANSFER_IN_FORMAT(surface->transferFormat) |
-            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-            GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    bool softwareRead = (surface->transferFormat == GX_TRANSFER_FMT_RGBA8 || surface->transferFormat == GX_TRANSFER_FMT_RGBA4) &&
+        transferW == surface->texWidth && transferH == surface->texHeight &&
+        (surface->texWidth % 8u) == 0u && (surface->texHeight % 8u) == 0u;
+    if (softwareRead) {
+        bool openedFrame = false;
+        if (resumeFrame) {
+            C3D_resumeDrawFrame(renderer);
+        } else {
+            C3D_FrameBegin(0);
+            openedFrame = true;
+        }
+        if (surface->transferFormat == GX_TRANSFER_FMT_RGBA4) {
+            GSPGPU_InvalidateDataCache(colorBuf, (uint32_t)(bytes / 2u));
+            C3D_untileRGBA4((const uint16_t*)colorBuf, (uint32_t*)temp, surface->texWidth, surface->texHeight);
+        } else {
+            GSPGPU_InvalidateDataCache(colorBuf, (uint32_t)bytes);
+            C3D_untileRGBA8((const uint32_t*)colorBuf, (uint32_t*)temp, surface->texWidth, surface->texHeight);
+        }
+        if (openedFrame) C3D_FrameEnd(0);
+        resumeFrame = false;
+    } else {
+        C3D_SyncDisplayTransfer((u32*)colorBuf, GX_BUFFER_DIM(transferW, transferH), (u32*)temp,
+            GX_BUFFER_DIM(surface->texWidth, surface->texHeight),
+            GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
+                GX_TRANSFER_IN_FORMAT(surface->transferFormat) |
+                GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    }
     if (resumeFrame) C3D_resumeDrawFrame(renderer);
     size_t srcPitch = (size_t)surface->texWidth * 4u;
     int32_t srcYOffset = C3D_surfaceStorageYOffset(surface);
@@ -5518,14 +5589,16 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
                 int32_t sx = (int32_t)((int64_t)x * (int64_t)surface->width / (int64_t)readW);
                 if (sx < 0) sx = 0;
                 if (sx >= surface->width) sx = surface->width - 1;
-                memcpy(outRGBA + (size_t)y * dstPitch + (size_t)x * 4u,
-                    temp + (size_t)(srcYOffset + sy) * srcPitch + (size_t)sx * 4u, 4u);
+                C3D_copyPixelToRGBA(outRGBA + (size_t)y * dstPitch + (size_t)x * 4u,
+                    temp + (size_t)(srcYOffset + sy) * srcPitch + (size_t)sx * 4u);
             }
         }
     } else {
         for (int32_t y = 0; y < readH; ++y) {
-            memcpy(outRGBA + (size_t)y * dstPitch, temp + (size_t)(srcYOffset + y) * srcPitch,
-                (size_t)readW * 4u);
+            const uint8_t* srcRow = temp + (size_t)(srcYOffset + y) * srcPitch;
+            uint8_t* dstRow = outRGBA + (size_t)y * dstPitch;
+            for (int32_t x = 0; x < readW; ++x)
+                C3D_copyPixelToRGBA(dstRow + (size_t)x * 4u, srcRow + (size_t)x * 4u);
         }
     }
     linearFree(temp);
@@ -6031,10 +6104,21 @@ static bool C3D_shadersSupported(void) {
     return false;
 }
 
+extern gxCmdQueue_s __C3D_Context;
+#define N3DS_GX_QUEUE_CLEAR_HEADROOM 8u
+
+static bool C3D_gxQueueAllowsClear(void) {
+    const gxCmdQueue_s* queue = &__C3D_Context;
+    uint32_t used = queue->numEntries;
+    uint32_t capacity = queue->maxEntries;
+    return capacity == 0u || used + N3DS_GX_QUEUE_CLEAR_HEADROOM <= capacity;
+}
+
 static void C3D_clearActive(Renderer* base, uint32_t color, float alpha) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     n3ds_c3dAcquireFrame(&renderer->drawContext);
+    if (!C3D_gxQueueAllowsClear()) return;
     C3D_safeFrameSplit(renderer);
     if (renderer->currentTargetSurfaceId >= 0 &&
         (uint32_t)renderer->currentTargetSurfaceId < renderer->surfaceCount &&

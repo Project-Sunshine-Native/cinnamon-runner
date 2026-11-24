@@ -445,7 +445,8 @@ static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
         slot = (uint32_t) varID;
     } else {
         // BC13/BC14 and BC17+: allocate the slot dynamically because the data.win CANNOT be trusted to know how many localVars the script has
-        slot = IntIntHashMap_getOrInsertSequential(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID);
+        if (!IntIntHashMap_tryGet(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID, &slot))
+            slot = IntIntHashMap_getOrInsertSequential(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID);
     }
 
     // Grow this frame's localVars window to cover `slot` whether the entry is pre-existing or freshly allocated.
@@ -1966,6 +1967,9 @@ static void handleDup(VMContext* ctx, OpWord opword) {
 
 // ===[ Function Call Handler ]===
 
+extern uint8_t* gSurfacePixelCachePixels;
+void VM_surfacePixelCacheClear(void);
+
 static void handleCall(VMContext* ctx, OpWord opword, const uint8_t* extraData) {
     int32_t argCount = OpWord_extra(opword);
     uint32_t funcIndex = resolveFuncOperand(extraData);
@@ -1980,6 +1984,13 @@ static void handleCall(VMContext* ctx, OpWord opword, const uint8_t* extraData) 
         repeat(argCount, i) {
             args[i] = stackPop(ctx);
         }
+    }
+
+    if (gSurfacePixelCachePixels != nullptr) {
+        const char* cacheFn = ctx->dataWin->func.functions[funcIndex].name;
+        bool isGetPixel = strncmp(cacheFn, "surface_getpixel", 16) == 0;
+        bool mayModify = !isGetPixel && (strncmp(cacheFn, "draw_", 5) == 0 || strncmp(cacheFn, "surface_", 8) == 0 || strncmp(cacheFn, "shader_", 7) == 0 || strncmp(cacheFn, "gpu_", 4) == 0 || strncmp(cacheFn, "vertex_", 7) == 0 || strncmp(cacheFn, "d3d_", 4) == 0 || strncmp(cacheFn, "application_surface", 19) == 0 || strncmp(cacheFn, "texture_", 8) == 0 || strncmp(cacheFn, "room_", 5) == 0 || strncmp(cacheFn, "event_perform", 13) == 0 || strncmp(cacheFn, "script_execute", 14) == 0);
+        if (mayModify) VM_surfacePixelCacheClear();
     }
 
 #ifdef ENABLE_VM_TRACING
@@ -3742,7 +3753,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
 
     // Execute the callee
 #ifdef ENABLE_VM_GML_PROFILER
-    Profiler_enter(ctx->profiler, code->name);
+    if (ctx->profiler != nullptr) Profiler_enter(ctx->profiler, code->name);
 #endif
     RValue result;
     bool handledNatively = nativeScript != nullptr && nativeScript(ctx, &result);
@@ -3754,7 +3765,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
         result = executeBytecodeInstructions(ctx, code);
     }
 #ifdef ENABLE_VM_GML_PROFILER
-    Profiler_exit(ctx->profiler);
+    if (ctx->profiler != nullptr) Profiler_exit(ctx->profiler);
 #endif
 
     requireMessage(ctx->savearefBalance == 0, "SAVEAREF/RESTOREAREF imbalance at end of VM_executeCode (unpaired SAVEAREF)");
