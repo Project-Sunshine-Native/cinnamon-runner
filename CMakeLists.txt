@@ -1152,7 +1152,7 @@ elseif(PLATFORM STREQUAL "wii")
 elseif(PLATFORM STREQUAL "3ds")
     set_target_properties(butterscotch PROPERTIES OUTPUT_NAME cinnamon)
     target_sources(butterscotch PRIVATE src/image/image_decoder.c)
-    add_compile_definitions(PLATFORM_3DS USE_FLOAT_REALS NO_RVALUE_INT64)
+    add_compile_definitions(PLATFORM_3DS USE_FLOAT_REALS)
 
     option(ENABLE_VM_GML_PROFILER "Enable Butterscotch VM/interpreter profiler" ON)
     if(ENABLE_VM_GML_PROFILER)
