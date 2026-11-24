@@ -9,7 +9,9 @@
 
 #include <math.h>
 
+#ifdef PLATFORM_3DS
 #include "3ds/3ds_renderer.h"
+#endif
 
 static NativeVarBinding edgeBinding = NATIVE_VAR_BINDING_INIT;
 static NativeVarBinding partBinding = NATIVE_VAR_BINDING_INIT;
@@ -89,11 +91,13 @@ static bool roundedgeDraw(VMContext* ctx, RValue* outResult) {
     GMLReal roomWidth = RValue_toReal(VMBuiltins_getVariable(ctx, self,
         BUILTIN_VAR_ROOM_WIDTH, "room_width", -1));
     bool drawn = false;
+#ifdef PLATFORM_3DS
     if (part == 40.0) {
         int32_t tpagIndex = Renderer_resolveTPAGIndex(renderer->dataWin, sprite, subimg);
         drawn = C3D_drawRoundEdge(renderer, tpagIndex, self->x, wp, roomWidth,
             color, self->imageAlpha);
     }
+#endif
     if (!drawn) {
         for (GMLReal i = 0.0; i < part; i += 1.0) {
             GMLReal offset = wp * i;
