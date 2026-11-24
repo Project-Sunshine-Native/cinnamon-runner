@@ -5,7 +5,9 @@
 #include "runner.h"
 #include "vm_builtins.h"
 
+#ifdef PLATFORM_3DS
 #include "3ds/3ds_renderer.h"
+#endif
 
 static NativeVarBinding sinerBinding = NATIVE_VAR_BINDING_INIT;
 static NativeVarBinding boffBinding = NATIVE_VAR_BINDING_INIT;
@@ -50,9 +52,12 @@ static bool trueLavawaverDraw(VMContext* ctx, RValue* outResult) {
         a += 1.0;
         waveX[i] = self->x + GMLReal_sin(a / b) * c;
     }
-
-    bool drawn = C3D_drawTrueLavaWave(renderer, tpagIndex, left, width, xOffset,
+    bool drawn = false;
+#ifdef PLATFORM_3DS
+    drawn = C3D_drawTrueLavaWave(renderer, tpagIndex, left, width, xOffset,
         self->y, waveX, renderer->drawAlpha);
+#endif
+
     if (!drawn && tpag != nullptr && width > 0.0f) {
         for (int32_t i = 0; i < 20; ++i) {
             float top = (float)(i * 2);
