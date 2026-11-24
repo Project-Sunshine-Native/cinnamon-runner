@@ -22,7 +22,7 @@ static struct {
 } cache;
 
 // Quick optimization for battles. Tiles used to still draw in battles (even though they cant be seen), but that causes lag, and i dont like the lag, so instead..
-// If the battle background is fully opaque, it will simply just not draw the tiles while in battles so there isn't any extra work not needing to be done.
+// If the battle background is fully opaque, it will simply just not draw the tiles while in battles so there isn't any extra work needing to be done.
 #ifdef PLATFORM_3DS
 bool NativeChapter2Battleback_getOpaqueDepth(Runner* runner, int32_t* depth) {
     VMContext* ctx = runner->vmContext;
