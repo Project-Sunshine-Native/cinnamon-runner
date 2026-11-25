@@ -929,7 +929,7 @@ static void n3ds_menuDrawSettings(N3DSMenu* menu, N3DSLoadingScreen* screen,
 static void n3ds_menuDrawCredits(N3DSMenu* menu, N3DSLoadingScreen* screen) {
     static const char* credits[] = {
         "Cinnamon Launcher v1.04",
-        "by Project Sunshine/grayforz24682, casrielasriel",
+        "by Project Sunshine/grayforz24682, casrielasriel, misdaze",
     };
     n3ds_menuSetFontFiltering(menu, true);
     for (int i = 0; i < 2; ++i) {
