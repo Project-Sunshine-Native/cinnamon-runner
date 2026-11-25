@@ -2817,6 +2817,7 @@ Instance* Runner_createStruct(Runner* runner) {
     s->structRegistryIndex = (int32_t) arrlen(runner->structInstances);
     arrput(runner->structInstances, s);
     s->refCount = 1;
+    runner->structsCreatedSinceSweep++;
     return s;
 }
 
@@ -3191,6 +3192,7 @@ void Runner_removeInstanceLayerElement(Runner* runner, int32_t instanceId) {
 // Reaps GML structs whose only remaining ref is the structInstances registry's implicit +1.
 // Walks backward so that swap-remove of dead entries doesn't disturb the indexes of entries we haven't visited yet.
 static void Runner_sweepDeadStructs(Runner* runner) {
+    runner->structsCreatedSinceSweep = 0;
     int32_t count = (int32_t) arrlen(runner->structInstances);
     for (int32_t i = count - 1; i >= 0; i--) {
         Instance* s = runner->structInstances[i];
@@ -3235,9 +3237,6 @@ void Runner_freeReleasedStructs(Runner* runner, Instance* calleeSelf, Instance* 
     for (EnvFrame* env = ctx->envStack; env != nullptr; env = env->parent) {
         addStructInUse(&inUse, env->savedInstance);
         addStructInUse(&inUse, env->savedOtherInstance);
-        repeat(arrlen(env->instanceList), i) {
-            addStructInUse(&inUse, env->instanceList[i]);
-        }
     }
     repeat(ctx->stack.top, i) {
         if (ctx->stack.slots[i].type == RVALUE_STRUCT) addStructInUse(&inUse, ctx->stack.slots[i].structInst);

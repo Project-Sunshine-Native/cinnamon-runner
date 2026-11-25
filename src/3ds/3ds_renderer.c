@@ -57,7 +57,7 @@ static uint32_t C3D_addBytes(uint32_t a, uint32_t b) {
 
 static bool C3D_fcramOverBudget(uint32_t residentFcramBytes, uint32_t incomingBytes) {
     uint32_t projectedBytes = C3D_addBytes(residentFcramBytes, incomingBytes);
-    uint32_t projectedReserve = C3D_addBytes(N3DS_TEXTURE_FCRAM_RESERVE_BYTES, incomingBytes);
+    uint32_t projectedReserve = C3D_addBytes(n3ds_getTextureReserveBytes(), incomingBytes);
     if (projectedBytes > n3ds_getTextureCacheBytes()) return true;
     if (n3ds_getFreeLinearBytes() < projectedReserve) return true;
     return n3ds_getFreeHeapBudgetBytes() < projectedReserve;
@@ -1565,6 +1565,13 @@ static bool C3D_evictOldestAtlasPage(N3DSRenderer* renderer, uint32_t protectedP
     C3D_finishAtlasDraws(renderer);
     C3D_unloadAtlasPage(renderer, candidate);
     return true;
+}
+
+static N3DSRenderer* gLinearReclaimRenderer = NULL;
+
+bool n3ds_reclaimLinearMemory(void) {
+    return gLinearReclaimRenderer != NULL && gLinearReclaimRenderer->atlas.loaded &&
+        C3D_evictOldestAtlasPage(gLinearReclaimRenderer, UINT32_MAX);
 }
 
 static void C3D_evictAtlasPages(
@@ -6158,6 +6165,7 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     base->dataWin = dataWin;
+    gLinearReclaimRenderer = renderer;
     if (dataWin->shdr.count > 0) {
         renderer->premultiplyAlphaShaders = safeCalloc(dataWin->shdr.count, sizeof(bool));
         for (uint32_t i = 0; i < dataWin->shdr.count; ++i)
@@ -6220,6 +6228,7 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
 static void C3D_destroy(Renderer* base) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
+    if (gLinearReclaimRenderer == renderer) gLinearReclaimRenderer = NULL;
     if (renderer->drawContextReady) n3ds_c3dFlush(&renderer->drawContext);
     for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
         if (!renderer->surfaces[i].used) continue;

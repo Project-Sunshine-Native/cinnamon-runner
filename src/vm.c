@@ -3775,7 +3775,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     result = RValue_stealOwnershipOrCopy(result);
 
     Runner* runner = (Runner*) ctx->runner;
-    bool freeReleasedStructs = !gTrackReleasedStructs && runner != nullptr && arrlen(runner->structInstances) >= STRUCT_EARLY_FREE_THRESHOLD;
+    bool freeReleasedStructs = !gTrackReleasedStructs && runner != nullptr && runner->structsCreatedSinceSweep >= STRUCT_EARLY_FREE_THRESHOLD;
     if (freeReleasedStructs) gTrackReleasedStructs = true;
 
     // Now that we have executed the current script, we can free the current CallFrame and "pop" it

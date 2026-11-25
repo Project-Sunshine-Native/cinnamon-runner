@@ -15,12 +15,8 @@
 #define N3DS_NEW3DS_APP_MEMORY_CAP_BYTES (128u * MB)
 #define N3DS_OLD3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES (24u * MB)
 #define N3DS_NEW3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES (60u * MB)
-// for whatever reason, new 3ds mode originally had a LOWER reserve amount (512kb) than old 3ds mode which caused streamed music to
-// no longer play after the texture cache as close to full.
-// why i decided to do that i have no fucking idea as it should be the other way around for a limit
-// like that but it turns out 4mb reserve works fine on o3ds too soooo yeah oops! 
-
-#define N3DS_TEXTURE_FCRAM_RESERVE_BYTES (4u * MB)
+#define N3DS_OLD3DS_TEXTURE_FCRAM_RESERVE_BYTES (512u * KB)
+#define N3DS_NEW3DS_TEXTURE_FCRAM_RESERVE_BYTES (1u * MB)
 
 static inline bool n3ds_isNew3DSMode(void) {
     static bool cached = false;
@@ -65,3 +61,11 @@ static inline uint32_t n3ds_getTextureCacheBytes(void) {
         ? N3DS_NEW3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES
         : N3DS_OLD3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES;
 }
+
+static inline uint32_t n3ds_getTextureReserveBytes(void) {
+    return n3ds_isNew3DSMode()
+        ? N3DS_NEW3DS_TEXTURE_FCRAM_RESERVE_BYTES
+        : N3DS_OLD3DS_TEXTURE_FCRAM_RESERVE_BYTES;
+}
+
+bool n3ds_reclaimLinearMemory(void);

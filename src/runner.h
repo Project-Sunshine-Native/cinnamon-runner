@@ -798,6 +798,7 @@ struct Runner {
     // Struct instances created by @@NewGMLObject@@. Reuses Instance with objectIndex=STRUCT_OBJECT_INDEX.
     // Tracked separately so event/step/draw iteration over runner->instances stays clean.
     Instance** structInstances;
+    int32_t structsCreatedSinceSweep;
     int32_t forcedDepth;
     // The time between the last frame and the current frame, stored in microseconds.
     GMLReal deltaTime;

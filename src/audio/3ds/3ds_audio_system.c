@@ -290,6 +290,12 @@ static const uint8_t* n3ds_audioGetSoundData(
     return audio->packedSoundBankData + entry->offset;
 }
 
+static void* n3ds_audioLinearAlloc(size_t size) {
+    void* data = linearAlloc(size);
+    while (data == NULL && n3ds_reclaimLinearMemory()) data = linearAlloc(size);
+    return data;
+}
+
 static bool n3ds_audioLoadSoundBank(N3DSAudioSystem* audio) {
     if (audio == NULL || audio->fileSystem == NULL) return false;
     if (audio->packedSoundBankData != NULL && audio->packedSoundBankEntries != NULL) return true;
@@ -325,7 +331,7 @@ static bool n3ds_audioLoadSoundBank(N3DSAudioSystem* audio) {
     if (!Sbk_parseEntries(tableData, &bankHeader, bankSize, entries)) goto cleanup;
 
     if (fseek(file, 0, SEEK_SET) != 0) goto cleanup;
-    bankData = linearAlloc(bankSize);
+    bankData = n3ds_audioLinearAlloc(bankSize);
     if (bankData == NULL) goto cleanup;
     if (fread(bankData, 1, bankSize, file) != bankSize) goto cleanup;
     DSP_FlushDataCache(bankData, bankSize);
@@ -410,7 +416,7 @@ static uint8_t* n3ds_audioLoadFileLinear(const char* path, uint32_t* outSize) {
     uint32_t fileSize = 0;
     uint8_t* data = NULL;
     if (n3ds_audioGetFileSize(file, &fileSize) && fileSize > 0) {
-        data = linearAlloc(fileSize);
+        data = n3ds_audioLinearAlloc(fileSize);
         if (data != NULL) {
             if (fseek(file, 0, SEEK_SET) != 0 || fread(data, 1, fileSize, file) != fileSize) {
                 linearFree(data);
@@ -1128,7 +1134,7 @@ static bool n3ds_audioStartPcmStream(N3DSAudioSystem* audio, N3DSSoundInstance* 
 
     size_t samplesPerBuffer = (size_t)N3DS_STREAM_MAX_CHUNK_SAMPLES * inst->channelCount;
     repeat(N3DS_STREAM_BUFFER_COUNT, i) {
-        inst->streamPcm[i] = linearAlloc(samplesPerBuffer * sizeof(int16_t));
+        inst->streamPcm[i] = n3ds_audioLinearAlloc(samplesPerBuffer * sizeof(int16_t));
         if (inst->streamPcm[i] == NULL) goto fail;
     }
     inst->currentSample = 0;
