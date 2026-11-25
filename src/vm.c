@@ -1987,10 +1987,38 @@ static void handleCall(VMContext* ctx, OpWord opword, const uint8_t* extraData) 
     }
 
     if (gSurfacePixelCachePixels != nullptr) {
-        const char* cacheFn = ctx->dataWin->func.functions[funcIndex].name;
-        bool isGetPixel = strncmp(cacheFn, "surface_getpixel", 16) == 0;
-        bool mayModify = !isGetPixel && (strncmp(cacheFn, "draw_", 5) == 0 || strncmp(cacheFn, "surface_", 8) == 0 || strncmp(cacheFn, "shader_", 7) == 0 || strncmp(cacheFn, "gpu_", 4) == 0 || strncmp(cacheFn, "vertex_", 7) == 0 || strncmp(cacheFn, "d3d_", 4) == 0 || strncmp(cacheFn, "application_surface", 19) == 0 || strncmp(cacheFn, "texture_", 8) == 0 || strncmp(cacheFn, "room_", 5) == 0 || strncmp(cacheFn, "event_perform", 13) == 0 || strncmp(cacheFn, "script_execute", 14) == 0);
-        if (mayModify) VM_surfacePixelCacheClear();
+        static uint8_t* sFnMayModify = nullptr;
+        static uint32_t sFnMayModifyCount = 0;
+        static const void* sFnMayModifyTable = nullptr;
+        if (sFnMayModify == nullptr || sFnMayModifyCount != ctx->dataWin->func.functionCount || sFnMayModifyTable != ctx->dataWin->func.functions) {
+            free(sFnMayModify);
+            sFnMayModifyCount = ctx->dataWin->func.functionCount;
+            sFnMayModifyTable = ctx->dataWin->func.functions;
+            sFnMayModify = (uint8_t*)safeCalloc(sFnMayModifyCount, 1);
+        }
+        if (sFnMayModify[funcIndex] == 0) {
+            static const char* const prefixes[] = {
+                "draw_", "surface_", "shader_", "gpu_", "vertex_", "d3d_",
+                "application_surface", "texture_", "room_", "event_perform", "script_execute",
+            };
+            const char* name = ctx->dataWin->func.functions[funcIndex].name;
+            bool isReadOnly = strncmp(name, "surface_get", 11) == 0 || strcmp(name, "surface_exists") == 0 ||
+                strncmp(name, "draw_get", 8) == 0 || strncmp(name, "draw_set_", 9) == 0 ||
+                strncmp(name, "gpu_get", 7) == 0 || strncmp(name, "gpu_set_", 8) == 0 ||
+                strncmp(name, "shader_get", 10) == 0 || strncmp(name, "texture_get", 11) == 0 ||
+                strncmp(name, "room_get", 8) == 0 || strcmp(name, "room_exists") == 0;
+            bool mayModify = false;
+            if (!isReadOnly) {
+                repeat(sizeof(prefixes) / sizeof(prefixes[0]), i) {
+                    if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0) {
+                        mayModify = true;
+                        break;
+                    }
+                }
+            }
+            sFnMayModify[funcIndex] = mayModify ? 2 : 1;
+        }
+        if (sFnMayModify[funcIndex] == 2) VM_surfacePixelCacheClear();
     }
 
 #ifdef ENABLE_VM_TRACING
