@@ -3216,6 +3216,61 @@ static void Runner_sweepDeadStructs(Runner* runner) {
     }
 }
 
+static void addStructInUse(Instance*** inUse, Instance* inst) {
+    if (inst != nullptr && inst->objectIndex == STRUCT_OBJECT_INDEX) arrput(*inUse, inst);
+}
+
+void Runner_freeReleasedStructs(Runner* runner, Instance* calleeSelf, Instance* calleeOther) {
+    VMContext* ctx = runner->vmContext;
+    static Instance** inUse = nullptr;
+    arrsetlen(inUse, 0);
+    addStructInUse(&inUse, calleeSelf);
+    addStructInUse(&inUse, calleeOther);
+    for (CallFrame* frame = ctx->currentCallFrame; frame != nullptr; frame = frame->parent) {
+        addStructInUse(&inUse, frame->self);
+        addStructInUse(&inUse, frame->other);
+        addStructInUse(&inUse, frame->initialSelf);
+        addStructInUse(&inUse, frame->initialOther);
+    }
+    for (EnvFrame* env = ctx->envStack; env != nullptr; env = env->parent) {
+        addStructInUse(&inUse, env->savedInstance);
+        addStructInUse(&inUse, env->savedOtherInstance);
+        repeat(arrlen(env->instanceList), i) {
+            addStructInUse(&inUse, env->instanceList[i]);
+        }
+    }
+    repeat(ctx->stack.top, i) {
+        if (ctx->stack.slots[i].type == RVALUE_STRUCT) addStructInUse(&inUse, ctx->stack.slots[i].structInst);
+    }
+
+    for (ptrdiff_t n = 0; arrlen(gReleasedStructIds) > n; n++) {
+        ptrdiff_t at = hmgeti(runner->instancesById, gReleasedStructIds[n]);
+        if (0 > at) continue;
+        Instance* s = runner->instancesById[at].value;
+        if (s->objectIndex != STRUCT_OBJECT_INDEX || s->refCount != 1 || s->pinned || 0 > s->structRegistryIndex) continue;
+        bool used = false;
+        repeat(arrlen(inUse), k) {
+            if (inUse[k] == s) { used = true; break; }
+        }
+        if (used) continue;
+
+        hmdel(runner->instancesById, s->instanceId);
+        int32_t idx = s->structRegistryIndex;
+        int32_t lastIdx = (int32_t) arrlen(runner->structInstances) - 1;
+        if (idx != lastIdx) {
+            Instance* moved = runner->structInstances[lastIdx];
+            runner->structInstances[idx] = moved;
+            moved->structRegistryIndex = idx;
+        }
+        arrpop(runner->structInstances);
+        s->structRegistryIndex = -1;
+        s->refCount = 0;
+        Instance_free(s);
+    }
+    arrsetlen(gReleasedStructIds, 0);
+    gTrackReleasedStructs = false;
+}
+
 void Runner_cleanupDestroyedInstances(Runner* runner) {
     int32_t count = (int32_t) arrlen(runner->instances);
     int32_t writeIdx = 0;

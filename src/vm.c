@@ -3774,6 +3774,10 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     // For owning results, the refCount/string buffer stays valid (the callee transferred one ownership slot to us).
     result = RValue_stealOwnershipOrCopy(result);
 
+    Runner* runner = (Runner*) ctx->runner;
+    bool freeReleasedStructs = !gTrackReleasedStructs && runner != nullptr && arrlen(runner->structInstances) >= STRUCT_EARLY_FREE_THRESHOLD;
+    if (freeReleasedStructs) gTrackReleasedStructs = true;
+
     // Now that we have executed the current script, we can free the current CallFrame and "pop" it
     // Free callee locals
     repeat(callFrame.localVarsCount, i) {
@@ -3799,6 +3803,8 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     // Reset all values in the stack (see issue #137)
     // Keep in mind that recent GameMaker versions do seem to emit Pop/Popz when exiting loops (example: when using a repeat + return) but older versions DO need it
     unwindVMStack(ctx, stackTopWhenTheCallFrameWasCreated);
+
+    if (freeReleasedStructs) Runner_freeReleasedStructs(runner, selfInstance, otherInstance);
 
     return result;
 }

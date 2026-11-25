@@ -67,6 +67,9 @@ Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, GMLReal x, G
     return inst;
 }
 
+bool gTrackReleasedStructs = false;
+int32_t* gReleasedStructIds = nullptr;
+
 void Instance_structIncRef(Instance* inst) {
     if (inst == nullptr) return;
     if (inst->pinned) return;
@@ -78,6 +81,7 @@ void Instance_structDecRef(Instance* inst) {
     if (inst->pinned) return;
     require(inst->refCount > 0);
     inst->refCount--;
+    if (gTrackReleasedStructs && inst->refCount == 1) arrput(gReleasedStructIds, (int32_t) inst->instanceId);
     // Never free here. The runner-side sweep reaps structs whose refCount has dropped to 1. (that is: when only the structInstances holds it)
 }
 

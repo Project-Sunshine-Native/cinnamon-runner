@@ -969,6 +969,9 @@ void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerO
 // Allocates a fresh GML struct and registers it in instancesById and structInstances.
 // refCount starts at 1 (the registry's implicit ref); callers that retain a reference must Instance_structIncRef.
 Instance* Runner_createStruct(Runner* runner);
+
+#define STRUCT_EARLY_FREE_THRESHOLD 4096
+void Runner_freeReleasedStructs(Runner* runner, Instance* calleeSelf, Instance* calleeOther);
 Instance* Runner_createInstance(Runner* runner, GMLReal x, GMLReal y, int32_t objectIndex);
 Instance* Runner_createInstanceWithDepth(Runner* runner, GMLReal x, GMLReal y, int32_t objectIndex, int32_t depth);
 Instance* Runner_createInstanceWithLayer(Runner* runner, GMLReal x, GMLReal y, int32_t objectIndex, int32_t layerId);
