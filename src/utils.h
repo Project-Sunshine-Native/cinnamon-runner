@@ -70,9 +70,7 @@ typedef DWORD (WINAPI *DiscardVirtualMemory_t)(PVOID, size_t);
 	} \
 } while (0)
 
-static inline void requireMessageFormatted(const char *file, int line, bool condition, const char *fmt, ...) {
-    if (condition)
-        return;
+static inline void requireMessageFormattedFail(const char *file, int line, const char *fmt, ...) {
     va_list args;
     logError("Requirement failed at %s:%d: ", file, line);
     va_start(args, fmt);
@@ -81,6 +79,10 @@ static inline void requireMessageFormatted(const char *file, int line, bool cond
     logError("\n");
     abort();
 }
+#define requireMessageFormatted(file, line, condition, ...) \
+    do { \
+        if (!(condition)) requireMessageFormattedFail(file, line, __VA_ARGS__); \
+    } while (0)
 
 static inline void* requireNotNullFunction(void* ptr, const char* file, int line, const char* name) {
     if (!ptr) {

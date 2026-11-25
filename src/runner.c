@@ -720,14 +720,14 @@ static void fireDrawSubtype(Runner* runner, Drawable* drawables, int32_t drawabl
         Instance* inst = d->instance;
         if (!inst->active || !inst->visible)
             continue;
-        if (d->layerOrder != 0) {
-            RuntimeLayer* layer = Runner_findRuntimeLayerById(runner, inst->layer);
-            if (layer == nullptr || !layer->visible) continue;
-        }
 
         int32_t ownerObjectIndex = -1;
         int32_t codeId = ResolvedEventTable_lookup(&runner->eventTable, inst->objectIndex, slot, &ownerObjectIndex);
         if (0 > codeId) continue;
+        if (d->layerOrder != 0) {
+            RuntimeLayer* layer = Runner_findRuntimeLayerById(runner, inst->layer);
+            if (layer == nullptr || !layer->visible) continue;
+        }
         int32_t previousShader = Runner_pushLayerShader(runner, inst->layer);
         Runner_executeResolvedEvent(runner, inst, nullptr, EVENT_DRAW, subtype, codeId, ownerObjectIndex);
         Runner_popLayerShader(runner, previousShader);
@@ -830,8 +830,19 @@ static void refreshDrawableLayerOrder(Runner* runner, Drawable* d) {
     RuntimeLayer* layer = Runner_findRuntimeLayerById(runner, layerId);
     d->layerOrder = layer == nullptr ? 0 : layer->drawOrder;
     if (layer == nullptr) return;
+    int32_t kidnamedvariable = d->elementOrder;
     d->elementOrder = -1;
     if (d->type == DRAWABLE_INSTANCE) {
+        // this kind of element list thing doesnt look like it changes much between frames
+        // this looks like a job for the lazy genius gimmick!
+        int32_t elementCount = (int32_t) arrlen(layer->elements);
+        if (kidnamedvariable >= 0 && elementCount > kidnamedvariable) {
+            RuntimeLayerElement* el = &layer->elements[kidnamedvariable];
+            if (el->type == RuntimeLayerElementType_Instance && (uint32_t) el->instanceId == d->instance->instanceId) {
+                d->elementOrder = kidnamedvariable;
+                return;
+            }
+        }
         repeat(arrlen(layer->elements), i) {
             RuntimeLayerElement* el = &layer->elements[i];
             if (el->type == RuntimeLayerElementType_Instance && (uint32_t) el->instanceId == d->instance->instanceId) {
@@ -961,8 +972,11 @@ void Runner_drawInstance(Runner* runner, Instance* inst) {
     drawInstance(runner, inst, false);
 }
 
+void VM_surfacePixelCacheClear(void);
+
 void Runner_draw(Runner* runner) {
     Room* room = runner->currentRoom;
+    VM_surfacePixelCacheClear();
 
     rebuildDrawableCacheIfDirty(runner);
     int32_t drawableCount = (int32_t) arrlen(runner->cachedDrawables);
@@ -2538,10 +2552,12 @@ static void populateObjectsWithAnyEventOfType(Runner* runner) {
             repeat(entryCount, i) {
                 int32_t obj = entries[i].concreteObjectId;
                 if (obj < 0 || obj >= objectCount) continue;
-                if (seen[obj]) continue;
                 seen[obj] = 1;
-                arrput(runner->objectsWithAnyEventOfType[t], obj);
             }
+        }
+        // welcome to qsort brother PLEASE GOD work this time if you dont im killing myself
+        repeat(objectCount, obj) {
+            if (seen[obj]) arrput(runner->objectsWithAnyEventOfType[t], (int32_t) obj);
         }
     }
 
@@ -3038,10 +3054,15 @@ RuntimeLayer* Runner_findRuntimeLayerByName(Runner* runner, char* name) {
 }
 
 RuntimeLayer* Runner_findRuntimeLayerById(Runner* runner, int32_t id) {
+    static size_t yoinky = 0;
     size_t count = arrlenu(runner->runtimeLayers);
+    if (count > yoinky && (int32_t) runner->runtimeLayers[yoinky].id == id)
+        return &runner->runtimeLayers[yoinky];
     repeat(count, i) {
-        if ((int32_t) runner->runtimeLayers[i].id == id)
+        if ((int32_t) runner->runtimeLayers[i].id == id) {
+            yoinky = i;
             return &runner->runtimeLayers[i];
+        }
     }
     return nullptr;
 }
@@ -3193,6 +3214,61 @@ static void Runner_sweepDeadStructs(Runner* runner) {
         s->refCount = 0; // drop the registry's ref; we are about to free
         Instance_free(s);
     }
+}
+
+static void addStructInUse(Instance*** inUse, Instance* inst) {
+    if (inst != nullptr && inst->objectIndex == STRUCT_OBJECT_INDEX) arrput(*inUse, inst);
+}
+
+void Runner_freeReleasedStructs(Runner* runner, Instance* calleeSelf, Instance* calleeOther) {
+    VMContext* ctx = runner->vmContext;
+    static Instance** inUse = nullptr;
+    arrsetlen(inUse, 0);
+    addStructInUse(&inUse, calleeSelf);
+    addStructInUse(&inUse, calleeOther);
+    for (CallFrame* frame = ctx->currentCallFrame; frame != nullptr; frame = frame->parent) {
+        addStructInUse(&inUse, frame->self);
+        addStructInUse(&inUse, frame->other);
+        addStructInUse(&inUse, frame->initialSelf);
+        addStructInUse(&inUse, frame->initialOther);
+    }
+    for (EnvFrame* env = ctx->envStack; env != nullptr; env = env->parent) {
+        addStructInUse(&inUse, env->savedInstance);
+        addStructInUse(&inUse, env->savedOtherInstance);
+        repeat(arrlen(env->instanceList), i) {
+            addStructInUse(&inUse, env->instanceList[i]);
+        }
+    }
+    repeat(ctx->stack.top, i) {
+        if (ctx->stack.slots[i].type == RVALUE_STRUCT) addStructInUse(&inUse, ctx->stack.slots[i].structInst);
+    }
+
+    for (ptrdiff_t n = 0; arrlen(gReleasedStructIds) > n; n++) {
+        ptrdiff_t at = hmgeti(runner->instancesById, gReleasedStructIds[n]);
+        if (0 > at) continue;
+        Instance* s = runner->instancesById[at].value;
+        if (s->objectIndex != STRUCT_OBJECT_INDEX || s->refCount != 1 || s->pinned || 0 > s->structRegistryIndex) continue;
+        bool used = false;
+        repeat(arrlen(inUse), k) {
+            if (inUse[k] == s) { used = true; break; }
+        }
+        if (used) continue;
+
+        hmdel(runner->instancesById, s->instanceId);
+        int32_t idx = s->structRegistryIndex;
+        int32_t lastIdx = (int32_t) arrlen(runner->structInstances) - 1;
+        if (idx != lastIdx) {
+            Instance* moved = runner->structInstances[lastIdx];
+            runner->structInstances[idx] = moved;
+            moved->structRegistryIndex = idx;
+        }
+        arrpop(runner->structInstances);
+        s->structRegistryIndex = -1;
+        s->refCount = 0;
+        Instance_free(s);
+    }
+    arrsetlen(gReleasedStructIds, 0);
+    gTrackReleasedStructs = false;
 }
 
 void Runner_cleanupDestroyedInstances(Runner* runner) {
@@ -3783,6 +3859,14 @@ static int sortInstancesByObjectIndexThenInstanceIdAscending(const void* element
     return 0;
 }
 
+// the collision snapshots seem to already be in order?  check that before paying for a qsort lol
+static bool instancesSortedByObjectIndexThenInstanceId(Instance** instances, int32_t count) {
+    for (int32_t i = 1; count > i; i++) {
+        if (sortInstancesByObjectIndexThenInstanceIdAscending(&instances[i - 1], &instances[i]) > 0) return false;
+    }
+    return true;
+}
+
 static int compareIntsAscending(const void* a, const void* b) {
     int32_t ia = *(const int32_t*)a;
     int32_t ib = *(const int32_t*)b;
@@ -3800,7 +3884,14 @@ static void dispatchCollisionEvents(Runner* runner) {
     // Copy and sort by ascending object index so collision dispatch order matches the native runner's slot-index order.
     int32_t* selfObjects = (int32_t*)safeMalloc((size_t)selfObjCount * sizeof(int32_t));
     memcpy(selfObjects, allSelfObjects, (size_t)selfObjCount * sizeof(int32_t));
-    qsort(selfObjects, (size_t)selfObjCount, sizeof(int32_t), compareIntsAscending);
+    // populateobjects already does most of the work and makes the list ascending so this qsort is stupid probably
+    bool selfObjectsSorted = true;
+    // FUCKING PLEASE
+    for (int32_t i = 1; selfObjCount > i; i++) {
+        if (selfObjects[i - 1] > selfObjects[i]) { selfObjectsSorted = false; break; }
+    }
+    if (!selfObjectsSorted)
+        qsort(selfObjects, (size_t)selfObjCount, sizeof(int32_t), compareIntsAscending);
 
     repeat(selfObjCount, soIdx) {
         int32_t selfObjIdx = selfObjects[soIdx];
@@ -3834,7 +3925,8 @@ static void dispatchCollisionEvents(Runner* runner) {
                 int32_t snapEnd = (int32_t) arrlen(runner->instanceSnapshots);
 
                 // The YoYo Runner sorts it by the object index THEN by the instanceId
-                qsort(runner->instanceSnapshots + snapBase, snapEnd - snapBase, sizeof(Instance*), sortInstancesByObjectIndexThenInstanceIdAscending);
+                if (!instancesSortedByObjectIndexThenInstanceId(runner->instanceSnapshots + snapBase, snapEnd - snapBase))
+                    qsort(runner->instanceSnapshots + snapBase, snapEnd - snapBase, sizeof(Instance*), sortInstancesByObjectIndexThenInstanceIdAscending);
 
                 for (int32_t snapIdx = snapBase; snapEnd > snapIdx; snapIdx++) {
                     Instance* other = runner->instanceSnapshots[snapIdx];
@@ -4507,6 +4599,7 @@ static void dispatchSpriteMessages(Runner* runner, PendingSpriteMessage* pending
 }
 
 void Runner_step(Runner* runner) {
+    VM_surfacePixelCacheClear();
 #ifdef ENABLE_FMOD
     if (runner->audioSystem && runner->audioSystem->fmodSystem) {
         double seconds = (double) runner->deltaTime / 1000000;
