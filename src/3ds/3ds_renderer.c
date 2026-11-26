@@ -46,6 +46,7 @@
 #define N3DS_TPAG_BINDING_FLAG_BORROWED_SURFACE 0x08u
 #define N3DS_SURFACE_SPRITE_POOL_MAX 4u
 #define N3DS_USER_SURFACE_FORMAT GPU_RGBA4
+#define N3DS_VRAM_SURFACE_HEADROOM_BYTES (64u * 1024u)
 #define N3DS_TILE_LOOKUP_CACHE_SIZE 64u
 #define N3DS_LINE_CLIP_EPSILON 0.000001f
 #define N3DS_LINE_LENGTH_EPSILON 0.0001f
@@ -273,7 +274,10 @@ typedef struct {
     bool pendingFree;
     bool samplingReady;
     bool topAligned;
+    bool wantsTarget;
+    bool pagedOut;
     uint32_t generation;
+    uint32_t lastTargetUse;
     int32_t width;
     int32_t height;
     int32_t logicalWidth;
@@ -389,6 +393,7 @@ typedef struct {
     N3DSSurface* surfaces;
     uint32_t surfaceCount;
     uint32_t nextSurfaceGeneration;
+    uint32_t surfaceTargetClock;
     uint32_t runtimeTpagStart;
     uint32_t* freeRuntimeTpagIndices;
     int32_t* freeSurfaceSpriteSurfaces;
@@ -467,6 +472,7 @@ static void C3D_setScreenRect(N3DSRenderer* renderer, float srcLeft,
 static bool C3D_setScreenTransform(N3DSRenderer* renderer,
     const Matrix4f* worldToClip, int32_t portX, int32_t portY, int32_t portW, int32_t portH);
 static bool C3D_surfaceIdIsLive(const N3DSRenderer* renderer, int32_t surfaceID);
+static bool C3D_surfacePageIn(N3DSRenderer* renderer, int32_t surfaceID);
 static bool C3D_surfaceBindingMatches(
     const N3DSRenderer* renderer, const N3DSTpagBinding* binding);
 static void C3D_destroySurfaceSlot(N3DSRenderer* renderer, int32_t surfaceID);
@@ -1697,7 +1703,7 @@ static bool C3D_loadAtlasPage(
                 (unsigned long)desc->pageFormat, (unsigned long)desc->dataOffset,
                 (unsigned long)desc->dataSize,
                 (unsigned long)n3ds_getFreeLinearBytes(),
-                (unsigned long)n3ds_getFreeHeapBudgetBytes());
+                (unsigned long)n3ds_getFreeHeapBytes());
         return false;
     }
 
@@ -2321,10 +2327,11 @@ static void C3D_bindTarget(N3DSRenderer* renderer, int32_t surfaceId, bool botto
     if (surfaceId >= 0 && (uint32_t)surfaceId < renderer->surfaceCount &&
         renderer->surfaces[surfaceId].used) {
         N3DSSurface* surface = &renderer->surfaces[surfaceId];
-        C3D_RenderTarget* target = renderer->surfaces[surfaceId].target;
-        if (target == NULL) {
+        if (surface->target == NULL && !C3D_surfacePageIn(renderer, surfaceId)) {
             return;
         }
+        surface->lastTargetUse = ++renderer->surfaceTargetClock;
+        C3D_RenderTarget* target = surface->target;
         bool sameTarget = renderer->currentTargetSurfaceId == surfaceId;
         n3ds_c3dFlush(&renderer->drawContext);
         renderer->hostViewProjectionActive = false;
@@ -4638,20 +4645,29 @@ static void C3D_blitAppSurface(N3DSRenderer* renderer) {
     C3D_restoreBlendState(renderer, &savedState);
 }
 
+static uint32_t C3D_surfaceTextureBytes(const N3DSSurface* surface) {
+    uint32_t bits;
+    switch (surface->texFormat) {
+    case GPU_RGBA8: bits = 32u; break;
+    case GPU_RGB8: bits = 24u; break;
+    case GPU_L8: case GPU_A8: case GPU_LA4: case GPU_ETC1A4: bits = 8u; break;
+    case GPU_L4: case GPU_A4: case GPU_ETC1: bits = 4u; break;
+    default: bits = 16u; break;
+    }
+    return (uint32_t)surface->texWidth * (uint32_t)surface->texHeight * bits / 8u;
+}
+
 static bool C3D_initSurfaceTexture(N3DSSurface* surface, bool preferVram,
     bool allowLinearFallback) {
     if (preferVram &&
+        vramSpaceFree() >= C3D_surfaceTextureBytes(surface) + N3DS_VRAM_SURFACE_HEADROOM_BYTES &&
         C3D_TexInitVRAM(&surface->tex, surface->texWidth, surface->texHeight,
             surface->texFormat)) return true;
     return allowLinearFallback &&
         C3D_TexInit(&surface->tex, surface->texWidth, surface->texHeight, surface->texFormat);
 }
 
-static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface,
-    bool preferVram, bool allowLinearFallback) {
-    if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
-    if (!allowLinearFallback) return false;
-
+static bool C3D_reclaimPendingSurfaces(N3DSRenderer* renderer) {
     bool reclaimed = false;
     ptrdiff_t pendingCount = arrlen(renderer->pendingSurfaceFrees);
     ptrdiff_t retainedCount = 0;
@@ -4670,6 +4686,123 @@ static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface
     } else {
         arrsetlen(renderer->pendingSurfaceFrees, retainedCount);
     }
+    return reclaimed;
+}
+
+static bool C3D_surfacePageOut(N3DSRenderer* renderer, int32_t surfaceID) {
+    N3DSSurface* surface = &renderer->surfaces[surfaceID];
+    C3D_Tex paged;
+    bool allocated = C3D_TexInit(&paged, (u16)surface->texWidth, (u16)surface->texHeight,
+        surface->texFormat);
+    while (!allocated && C3D_evictOldestAtlasPage(renderer, UINT32_MAX)) {
+        allocated = C3D_TexInit(&paged, (u16)surface->texWidth, (u16)surface->texHeight,
+            surface->texFormat);
+    }
+    if (!allocated) return false;
+    C3D_TexFlush(&paged);
+
+    surface = &renderer->surfaces[surfaceID];
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
+    n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
+    C3D_SyncTextureCopy((u32*)surface->tex.data, 0, (u32*)paged.data, 0, surface->tex.size, 8);
+    C3D_RenderTargetDelete(surface->target);
+    surface->target = NULL;
+    C3D_TexDelete(&surface->tex);
+    surface->tex = paged;
+    C3D_setTextureFiltering(&surface->tex, renderer->base.texFilter);
+    C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    surface->pagedOut = true;
+    surface->samplingReady = true;
+    if (resumeFrame) C3D_resumeDrawFrame(renderer);
+    // logEvent("vram", "pageout id=%ld size=%lu free=%lu", (long)surfaceID,
+        // (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
+    return true;
+}
+
+static bool C3D_pageOutLruSurface(N3DSRenderer* renderer, int32_t keepID) {
+    if (C3D_reclaimPendingSurfaces(renderer)) return true;
+    while (arrlen(renderer->freeSurfaceSpriteSurfaces) > 0) {
+        int32_t pooledID =
+            renderer->freeSurfaceSpriteSurfaces[arrlen(renderer->freeSurfaceSpriteSurfaces) - 1];
+        arrsetlen(
+            renderer->freeSurfaceSpriteSurfaces, arrlen(renderer->freeSurfaceSpriteSurfaces) - 1);
+        if (pooledID != keepID && pooledID != renderer->currentTargetSurfaceId &&
+            C3D_surfaceIdIsLive(renderer, pooledID)) {
+            C3D_destroySurfaceSlotNow(renderer, pooledID);
+            return true;
+        }
+    }
+    int32_t candidate = -1;
+    uint32_t oldest = UINT32_MAX;
+    for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
+        const N3DSSurface* surface = &renderer->surfaces[i];
+        int32_t surfaceID = (int32_t)i;
+        if (surfaceID == keepID || surfaceID == renderer->currentTargetSurfaceId ||
+            surfaceID == renderer->applicationSurfaceId || surfaceID == renderer->bottomSurfaceId ||
+            !surface->used || surface->pendingFree || !surface->wantsTarget || surface->pagedOut ||
+            surface->target == NULL || surface->lastTargetUse >= oldest)
+            continue;
+        oldest = surface->lastTargetUse;
+        candidate = surfaceID;
+    }
+    return candidate >= 0 && C3D_surfacePageOut(renderer, candidate);
+}
+
+static bool C3D_allocSurfaceVram(
+    N3DSRenderer* renderer, const N3DSSurface* surface, C3D_Tex* outTex, int32_t keepID) {
+    uint32_t bytes = C3D_surfaceTextureBytes(surface);
+    for (;;) {
+        if (vramSpaceFree() >= bytes + N3DS_VRAM_SURFACE_HEADROOM_BYTES &&
+            C3D_TexInitVRAM(outTex, (u16)surface->texWidth, (u16)surface->texHeight,
+                surface->texFormat))
+            return true;
+        if (!C3D_pageOutLruSurface(renderer, keepID)) return false;
+    }
+}
+
+static bool C3D_surfacePageIn(N3DSRenderer* renderer, int32_t surfaceID) {
+    if (surfaceID < 0 || (uint32_t)surfaceID >= renderer->surfaceCount ||
+        !renderer->surfaces[surfaceID].used || !renderer->surfaces[surfaceID].wantsTarget)
+        return false;
+    if (!renderer->surfaces[surfaceID].pagedOut) return renderer->surfaces[surfaceID].target != NULL;
+
+    C3D_Tex resident;
+    if (!C3D_allocSurfaceVram(renderer, &renderer->surfaces[surfaceID], &resident, surfaceID))
+        return false;
+    N3DSSurface* surface = &renderer->surfaces[surfaceID];
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
+    n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
+    C3D_SyncTextureCopy((u32*)surface->tex.data, 0, (u32*)resident.data, 0, surface->tex.size, 8);
+    C3D_Tex paged = surface->tex;
+    surface->tex = resident;
+    surface->target = C3D_RenderTargetCreateFromTex(&surface->tex, GPU_TEXFACE_2D, 0, -1);
+    if (resumeFrame) {
+        C3D_resumeDrawFrame(renderer);
+    } else {
+        C3D_FrameBegin(0);
+        C3D_FrameEnd(0);
+    }
+    if (surface->target == NULL) {
+        C3D_TexDelete(&surface->tex);
+        surface->tex = paged;
+        return false;
+    }
+    C3D_TexDelete(&paged);
+    C3D_setTextureFiltering(&surface->tex, renderer->base.texFilter);
+    C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    surface->pagedOut = false;
+    surface->samplingReady = true;
+    // logEvent("vram", "pagein id=%ld size=%lu free=%lu", (long)surfaceID,
+        // (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
+    return true;
+}
+
+static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface,
+    bool preferVram, bool allowLinearFallback) {
+    if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
+    if (!allowLinearFallback) return false;
+
+    bool reclaimed = C3D_reclaimPendingSurfaces(renderer);
     if (reclaimed &&
         C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
 
@@ -4715,14 +4848,20 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     surface->texHeight = n3ds_nextPow2(height);
     surface->texFormat = texFormat;
     surface->transferFormat = C3D_transferFormatForTex(texFormat);
-    if (!C3D_allocSurfaceTexture(renderer, surface, preferVram,
-        allowLinearFallback)) {
+    bool inVram = renderTarget && preferVram &&
+        C3D_allocSurfaceVram(renderer, surface, &surface->tex, (int32_t)slot);
+    if (!inVram && ((renderTarget && !allowLinearFallback) ||
+        !C3D_allocSurfaceTexture(renderer, surface, renderTarget ? false : preferVram,
+            allowLinearFallback))) {
+        // logEvent("vram", "create failed slot=%ld phys %ldx%ld tex %ldx%ld fmt=%ld vramFree=%lu linearFree=%lu",
+            // (long)slot, (long)width, (long)height, (long)surface->texWidth, (long)surface->texHeight,
+            // (long)texFormat, (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
         memset(surface, 0, sizeof(*surface));
         return -1;
     }
-    if (renderTarget)
+    if (inVram)
         surface->target = C3D_RenderTargetCreateFromTex(&surface->tex, GPU_TEXFACE_2D, 0, -1);
-    if (renderTarget && surface->target == NULL) {
+    if (inVram && surface->target == NULL) {
         C3D_TexDelete(&surface->tex);
         memset(surface, 0, sizeof(*surface));
         return -1;
@@ -4731,12 +4870,19 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     surface->used = true;
     surface->samplingReady = true;
+    surface->wantsTarget = renderTarget;
+    surface->pagedOut = renderTarget && !inVram;
+    surface->lastTargetUse = ++renderer->surfaceTargetClock;
     surface->generation = ++renderer->nextSurfaceGeneration;
     if (surface->generation == 0u) surface->generation = ++renderer->nextSurfaceGeneration;
     surface->width = width;
     surface->height = height;
     surface->logicalWidth = logicalWidth > 0 ? logicalWidth : width;
     surface->logicalHeight = logicalHeight > 0 ? logicalHeight : height;
+    // logEvent("vram", "create id=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld fmt=%ld rt=%d data=%p size=%lu free=%lu",
+        // (long)slot, (long)width, (long)height, (long)surface->texWidth, (long)surface->texHeight,
+        // (long)surface->logicalWidth, (long)surface->logicalHeight, (long)texFormat, (int)renderTarget,
+        // surface->tex.data, (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
     return (int32_t)slot;
 }
 
@@ -4852,7 +4998,7 @@ static uint32_t C3D_allocRuntimeTpag(N3DSRenderer* renderer, DataWin* dw) {
 
 static bool C3D_recycleSpriteSurface(N3DSRenderer* renderer, int32_t surfaceID) {
     if (!C3D_surfaceIdIsLive(renderer, surfaceID) ||
-        renderer->surfaces[surfaceID].target == NULL)
+        !renderer->surfaces[surfaceID].wantsTarget)
         return false;
     for (ptrdiff_t i = 0; i < arrlen(renderer->freeSurfaceSpriteSurfaces); ++i) {
         if (renderer->freeSurfaceSpriteSurfaces[i] == surfaceID) return true;
@@ -4871,7 +5017,7 @@ static int32_t C3D_allocSpriteSurface(
     for (ptrdiff_t i = arrlen(renderer->freeSurfaceSpriteSurfaces) - 1; i >= 0; --i) {
         int32_t surfaceID = renderer->freeSurfaceSpriteSurfaces[i];
         if (!C3D_surfaceIdIsLive(renderer, surfaceID) ||
-            renderer->surfaces[surfaceID].target == NULL) {
+            !renderer->surfaces[surfaceID].wantsTarget) {
             arrdel(renderer->freeSurfaceSpriteSurfaces, i);
             continue;
         }
@@ -4919,10 +5065,15 @@ static void C3D_destroySurfaceSlotNow(N3DSRenderer* renderer, int32_t surfaceID)
     if (renderer->currentTargetSurfaceId == surfaceID) renderer->currentTargetSurfaceId = INT32_MIN;
     if (renderer->hostCaptureSurfaceId == surfaceID) renderer->hostCaptureSurfaceId = -1;
     if (renderer->bottomSurfaceId == surfaceID) renderer->bottomSurfaceId = -1;
+    // void* logData = surface->tex.data;
+    // unsigned long logSize = (unsigned long)surface->tex.size;
     n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
     if (surface->target != NULL) C3D_RenderTargetDelete(surface->target);
     C3D_TexDelete(&surface->tex);
     memset(surface, 0, sizeof(*surface));
+    // logEvent("vram", "destroy id=%ld data=%p size=%lu app=%ld capture=%ld free=%lu",
+        // (long)surfaceID, logData, logSize, (long)renderer->applicationSurfaceId,
+        // (long)renderer->hostCaptureSurfaceId, (unsigned long)vramSpaceFree());
     if (resumeFrame) C3D_resumeDrawFrame(renderer);
 }
 
@@ -5043,7 +5194,7 @@ static int32_t C3D_snapshotSurface(Renderer* base, int32_t sourceID) {
         if (capture->width != sourceW || capture->height != sourceH ||
             C3D_surfaceLogicalWidth(capture) != sourceLogicalW ||
             C3D_surfaceLogicalHeight(capture) != sourceLogicalH ||
-            capture->texFormat != sourceFormat || capture->target == NULL) {
+            capture->texFormat != sourceFormat || !capture->wantsTarget) {
             C3D_destroySurfaceSlot(renderer, renderer->hostCaptureSurfaceId);
         }
     }
@@ -5066,6 +5217,7 @@ static int32_t C3D_snapshotSurface(Renderer* base, int32_t sourceID) {
     capture->topAligned = source->topAligned;
     if (C3D_transferSurface(renderer, sourceID, renderer->hostCaptureSurfaceId))
         return renderer->hostCaptureSurfaceId;
+    if (!C3D_surfacePageIn(renderer, renderer->hostCaptureSurfaceId)) return -1;
 
     N3DSRenderStateSnapshot savedState;
     C3D_saveRenderState(renderer, &savedState);
@@ -5104,7 +5256,7 @@ static bool C3D_copySurfaceRect(Renderer* base, int32_t sourceID, int32_t destID
         return false;
     N3DSSurface* source = &renderer->surfaces[sourceID];
     N3DSSurface* dest = &renderer->surfaces[destID];
-    if (dest->target == NULL) {
+    if (dest->target == NULL && !C3D_surfacePageIn(renderer, destID)) {
         return false;
     }
     if (renderer->currentTargetSurfaceId == sourceID) {
@@ -5188,7 +5340,8 @@ static bool C3D_setTargetProjection(Renderer* base, int32_t surfaceID) {
     }
     if (!C3D_surfaceExists(base, surfaceID)) return false;
     surfaceID = targetSurfaceID;
-    if (surfaceID >= 0 && renderer->surfaces[surfaceID].target == NULL) return false;
+    if (surfaceID >= 0 && renderer->surfaces[surfaceID].target == NULL &&
+        !C3D_surfacePageIn(renderer, surfaceID)) return false;
     C3D_bindTarget(renderer, surfaceID, false);
     if (surfaceID >= 0) {
         N3DSSurface* surface = &renderer->surfaces[surfaceID];
@@ -5293,7 +5446,7 @@ static int32_t C3D_ensureAppSurface(
         logEvent("renderer",
             "app surface create failed logical=%ldx%ld linFree=%lu appFree=%lu vramFree=%lu",
             (long)width, (long)height, (unsigned long)n3ds_getFreeLinearBytes(),
-            (unsigned long)n3ds_getFreeHeapBudgetBytes(),
+            (unsigned long)n3ds_getFreeHeapBytes(),
             (unsigned long)vramSpaceFree());
     }
     return renderer->applicationSurfaceId;
@@ -5443,6 +5596,8 @@ static void C3D_surfaceResize(
         }
         return;
     }
+    // logEvent("vram", "resize id=%ld -> new=%ld data=%p", (long)surfaceID, (long)newId,
+        // renderer->surfaces[newId].tex.data);
     if (newId != surfaceID) {
         renderer->surfaces[surfaceID] = renderer->surfaces[newId];
         memset(&renderer->surfaces[newId], 0, sizeof(renderer->surfaces[newId]));
@@ -5768,8 +5923,11 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     N3DSSurfaceSnapshotRect snapshot;
     bool useActiveProjection = appSurfaceSource && renderer->currentTargetSurfaceId == surfaceID;
     if (!C3D_getSnapshotRect(
-            renderer, source, useActiveProjection, x, y, requestedW, requestedH, &snapshot))
+            renderer, source, useActiveProjection, x, y, requestedW, requestedH, &snapshot)) {
+        // logEvent("sfs", "snapshot rect failed src=%ld req %ldx%ld", (long)surfaceID,
+            // (long)requestedW, (long)requestedH);
         return -1;
+    }
 
     int32_t targetPhysicalW =
         (int32_t)ceilf((float)snapshot.snapshotW * C3D_surfacePhysicalScaleX(source));
@@ -5781,6 +5939,9 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     privateSurfaceID = C3D_allocSpriteSurface(
         base, targetPhysicalW, targetPhysicalH, requestedW, requestedH);
     if (privateSurfaceID < 0) {
+        // logEvent("sfs", "sprite surface alloc failed src=%ld phys %ldx%ld req %ldx%ld vramFree=%lu linearFree=%lu",
+            // (long)surfaceID, (long)targetPhysicalW, (long)targetPhysicalH, (long)requestedW,
+            // (long)requestedH, (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
         return -1;
     }
     float dstX = (float)snapshot.destX * (float)requestedW / (float)snapshot.snapshotW;
@@ -5789,6 +5950,24 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     float dstH = (float)snapshot.copyH * (float)requestedH / (float)snapshot.snapshotH;
     bool copied = C3D_copySurfaceRect(base, surfaceID, privateSurfaceID,
         snapshot.srcX, snapshot.srcY, snapshot.copyW, snapshot.copyH, dstX, dstY, dstW, dstH);
+    // {
+        // const N3DSSurface* logSrc = &renderer->surfaces[surfaceID];
+        // const N3DSSurface* logDst = &renderer->surfaces[privateSurfaceID];
+        // logEvent("sfs", "req %ld,%ld %ldx%ld src=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld data=%p",
+            // (long)x, (long)y, (long)requestedW, (long)requestedH, (long)surfaceID,
+            // (long)logSrc->width, (long)logSrc->height, (long)logSrc->texWidth, (long)logSrc->texHeight,
+            // (long)C3D_surfaceLogicalWidth(logSrc), (long)C3D_surfaceLogicalHeight(logSrc), logSrc->tex.data);
+        // logEvent("sfs", "snap src %ld,%ld copy %ldx%ld dest %ld,%ld snapsize %ldx%ld",
+            // (long)snapshot.srcX, (long)snapshot.srcY, (long)snapshot.copyW, (long)snapshot.copyH,
+            // (long)snapshot.destX, (long)snapshot.destY, (long)snapshot.snapshotW, (long)snapshot.snapshotH);
+        // logEvent("sfs", "priv=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld data=%p dst %.1f,%.1f %.1fx%.1f ok=%d",
+            // (long)privateSurfaceID, (long)logDst->width, (long)logDst->height,
+            // (long)logDst->texWidth, (long)logDst->texHeight,
+            // (long)C3D_surfaceLogicalWidth(logDst), (long)C3D_surfaceLogicalHeight(logDst), logDst->tex.data,
+            // dstX, dstY, dstW, dstH, (int)copied);
+        // logEvent("sfs", "mem vramFree=%lu linearFree=%lu",
+            // (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
+    // }
     if (!copied) {
         C3D_destroySurfaceSlot(renderer, privateSurfaceID);
         return -1;

@@ -3,6 +3,7 @@
 #include <malloc.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <unistd.h>
 #define KB (1024u)
 #define MB (1024u * KB)
 #define N3DS_ENABLE_DEBUG_BOTTOM_SCREEN 1
@@ -15,6 +16,7 @@
 #define N3DS_NEW3DS_APP_MEMORY_CAP_BYTES (128u * MB)
 #define N3DS_OLD3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES (24u * MB)
 #define N3DS_NEW3DS_TEXTURE_FCRAM_CACHE_MAX_BYTES (60u * MB)
+#define N3DS_NEW3DS_EXTRA_LINEAR_HEAP_BYTES (20u * MB)
 // Dont change these unless you like crashing your 3ds and spending 48 hours finding the issue
 #define N3DS_OLD3DS_TEXTURE_FCRAM_RESERVE_BYTES (1u * MB)
 #define N3DS_NEW3DS_TEXTURE_FCRAM_RESERVE_BYTES (1536u * KB)
@@ -51,6 +53,14 @@ static inline uint32_t n3ds_getFreeHeapBudgetBytes(void) {
     uint32_t totalBytes = n3ds_getAppMemoryLimitBytes();
     uint32_t usedBytes = n3ds_getUsedHeapBytes();
     return totalBytes > usedBytes ? totalBytes - usedBytes : 0u;
+}
+
+static inline uint32_t n3ds_getFreeHeapBytes(void) {
+    extern char* fake_heap_end;
+    struct mallinfo memInfo = mallinfo();
+    uintptr_t top = (uintptr_t)sbrk(0);
+    uintptr_t end = (uintptr_t)fake_heap_end;
+    return (uint32_t)(end > top ? end - top : 0u) + (uint32_t)memInfo.fordblks;
 }
 
 static inline uint32_t n3ds_getFreeLinearBytes(void) {

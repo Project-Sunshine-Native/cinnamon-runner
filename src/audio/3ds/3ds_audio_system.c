@@ -2028,33 +2028,10 @@ static void n3ds_audioSetGroupGain(
 
 static void n3ds_audioSetChannelCount(MAYBE_UNUSED AudioSystem* base, MAYBE_UNUSED int32_t count) {}
 static void n3ds_audioGroupLoad(AudioSystem* base, int32_t groupIndex) {
-    N3DSAudioSystem* audio = (N3DSAudioSystem*)base;
     if (groupIndex <= 0 || base->dw == NULL || (uint32_t)groupIndex >= base->dw->agrp.count) return;
     while (arrlen(base->audioGroups) <= groupIndex)
         arrput(base->audioGroups, NULL);
-    if (base->audioGroups[groupIndex] != NULL) return;
-
-    const char* path =
-        base->dw->agrp.audioGroups != NULL ? base->dw->agrp.audioGroups[groupIndex].path : NULL;
-    char fallback[32];
-    if (path == NULL || path[0] == '\0') {
-        snprintf(fallback, sizeof(fallback), "audiogroup%ld.dat", (long)groupIndex);
-        path = fallback;
-    }
-    DataWin* group = NULL;
-    if (audio->fileSystem != NULL &&
-        audio->fileSystem->vtable->fileExists(audio->fileSystem, path)) {
-        char* resolved = audio->fileSystem->vtable->resolvePath(audio->fileSystem, path);
-        if (resolved != NULL) {
-            DataWinParserOptions options = {0};
-            options.parseAudo = true;
-            options.lazyLoadAudio = base->dw->lazyLoadAudio;
-            if (base->dw->mappedFile != NULL) options.loadType = DATAWINLOADTYPE_MAP_FILE;
-            group = DataWin_parse(resolved, options);
-            free(resolved);
-        }
-    }
-    base->audioGroups[groupIndex] = group != NULL ? group : safeCalloc(1, sizeof(DataWin));
+    if (base->audioGroups[groupIndex] == NULL) base->audioGroups[groupIndex] = safeCalloc(1, sizeof(DataWin));
 }
 static bool n3ds_audioGroupIsLoaded(AudioSystem* base, int32_t groupIndex) {
     return groupIndex >= 0 && arrlen(base->audioGroups) > groupIndex &&

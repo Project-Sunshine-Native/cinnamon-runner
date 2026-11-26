@@ -489,7 +489,7 @@ void n3ds_overlayDraw(Renderer* renderer, const Runner* runner) {
     }
 
     uint32_t trackedVramFreeBytes = vramSpaceFree();
-    uint32_t trackedAppFreeKb = n3ds_getFreeHeapBudgetBytes() / 1024u;
+    uint32_t trackedAppFreeKb = n3ds_getFreeHeapBytes() / 1024u;
     uint32_t trackedVramFreeKb = trackedVramFreeBytes / 1024u;
 
     char text[1024];
