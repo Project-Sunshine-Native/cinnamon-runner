@@ -837,16 +837,6 @@ static bool battlecontrollerDraw(VMContext* ctx, RValue* outResult) {
     return true;
 }
 
-static int32_t battleGlobalVarID(VMContext* ctx, const char* name) {
-    for (uint32_t i = 0; i < ctx->dataWin->vari.variableCount; ++i) {
-        const Variable* var = &ctx->dataWin->vari.variables[i];
-        if (var->instanceType == INSTANCE_GLOBAL && var->varID >= 0 && strcmp(var->name, name) == 0) {
-            return var->varID;
-        }
-    }
-    return VM_getOrAllocateVarID(ctx, name);
-}
-
 static int32_t battleSpriteID(const DataWin* dataWin, const char* name) {
     for (uint32_t i = 0; i < dataWin->sprt.count; ++i) {
         const Sprite* sprite = &dataWin->sprt.sprites[i];
@@ -872,17 +862,17 @@ void NativeChapter2BattlecontrollerDraw_register(VMContext* ctx) {
     if (!VM_registerNativeScript(ctx, "gml_Object_obj_battlecontroller_Draw_0", battlecontrollerDraw)) return;
 
 #define RESOLVE_SELF(name) cache.name = NativeScript_getSelfVarID(ctx, #name);
-#define RESOLVE_GLOBAL(name) cache.name = battleGlobalVarID(ctx, #name);
+#define RESOLVE_GLOBAL(name) cache.name = NativeScript_getGlobalVarID(ctx, #name);
     BATTLE_SELF_VARS(RESOLVE_SELF)
     BATTLE_GLOBAL_VARS(RESOLVE_GLOBAL)
 #undef RESOLVE_GLOBAL
 #undef RESOLVE_SELF
 
-    cache.g_canact = battleGlobalVarID(ctx, "canact");
-    cache.g_actsimul = battleGlobalVarID(ctx, "actsimul");
-    cache.g_actname = battleGlobalVarID(ctx, "actname");
-    cache.g_actdesc = battleGlobalVarID(ctx, "actdesc");
-    cache.partyChar = battleGlobalVarID(ctx, "char");
+    cache.g_canact = NativeScript_getGlobalVarID(ctx, "canact");
+    cache.g_actsimul = NativeScript_getGlobalVarID(ctx, "actsimul");
+    cache.g_actname = NativeScript_getGlobalVarID(ctx, "actname");
+    cache.g_actdesc = NativeScript_getGlobalVarID(ctx, "actdesc");
+    cache.partyChar = NativeScript_getGlobalVarID(ctx, "char");
     cache.heart = battleSpriteID(ctx->dataWin, "spr_heart");
     cache.tiredMark = battleSpriteID(ctx->dataWin, "spr_tiredmark");
     cache.spareStar = battleSpriteID(ctx->dataWin, "spr_sparestar");

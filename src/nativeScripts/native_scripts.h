@@ -12,9 +12,12 @@ void NativeScripts_registerAll(VMContext* ctx);
 #include <stdint.h>
 
 struct Runner;
+struct Instance;
 bool NativeBattleback_getOpaqueDepth(struct Runner* runner, int32_t* depth);
 bool NativeChapter2Battleback_getOpaqueDepth(struct Runner* runner, int32_t* depth);
-bool NativeChapter2Parallax_isDrawObject(VMContext* ctx, int32_t objectIndex);
+bool NativeChapter2Battleback_isPausedObject(VMContext* ctx, int32_t objectIndex);
+bool NativeChapter2Battleback_shouldSkipEvent(struct Runner* runner, struct Instance* instance,
+    int32_t eventType, int32_t eventSubtype);
 #endif
 
 #endif /* _CINNAMON_NATIVE_SCRIPTS_H_ */

@@ -1973,6 +1973,13 @@ static float n3ds_audioGetSoundLength(AudioSystem* base, int32_t soundOrInstance
         return length;
     }
 
+    const N3DSPackedSoundBankEntry* packedEntry = n3ds_audioGetSoundEntry(audio, soundOrInstance);
+    if (packedEntry != NULL && packedEntry->sampleRate > 0) {
+        float length = (float)packedEntry->sampleCount / (float)packedEntry->sampleRate;
+        LightLock_Unlock(&audio->lock);
+        return length;
+    }
+
     int32_t slot = n3ds_audioStreamSlotForSound(soundOrInstance);
     if (slot >= 0) {
         N3DSStreamEntry* stream = &audio->streams[slot];

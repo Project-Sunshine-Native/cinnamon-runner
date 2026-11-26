@@ -3773,6 +3773,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     // The instruction pointer before this CallFrame was created
     uint32_t instructionPointerWhenTheCallFrameWasCreated = ctx->ip;
     uint32_t stackTopWhenTheCallFrameWasCreated = ctx->stack.top;
+    int32_t savearefBalanceWhenTheCallFrameWasCreated = ctx->savearefBalance;
 
     ctx->savearefBalance = 0;
 
@@ -3827,6 +3828,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
 
     // Restore caller frame
     ctx->ip = instructionPointerWhenTheCallFrameWasCreated;
+    ctx->savearefBalance = savearefBalanceWhenTheCallFrameWasCreated;
 
     // Reset all values in the stack (see issue #137)
     // Keep in mind that recent GameMaker versions do seem to emit Pop/Popz when exiting loops (example: when using a repeat + return) but older versions DO need it

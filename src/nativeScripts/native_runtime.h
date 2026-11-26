@@ -72,6 +72,7 @@ RValue NativeScriptScope_getTemp(const NativeScriptScope* scope, int32_t index);
 void NativeScriptScope_finish(NativeScriptScope* scope, RValue* outResult, RValue value);
 
 int32_t NativeScript_getSelfVarID(VMContext* ctx, const char* name);
+int32_t NativeScript_getGlobalVarID(VMContext* ctx, const char* name);
 RValue NativeScript_getVariable(VMContext* ctx, struct Instance* instance,
     NativeVarBinding* binding, const char* name);
 void NativeScript_setVariable(VMContext* ctx, struct Instance* instance,

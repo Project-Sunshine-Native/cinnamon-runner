@@ -1,5 +1,4 @@
 #include "nativeScripts/native_runtime.h"
-#include "nativeScripts/native_scripts.h"
 
 #include "gml_array.h"
 #include "instance.h"
@@ -24,24 +23,7 @@ static struct {
     float shadeAlpha[18];
     float circleX[65], circleY[65];
     int32_t circleSegments;
-#ifdef PLATFORM_3DS
-    const VMContext* owner;
-    int32_t parallaxObjects[7];
-#endif
 } cache;
-
-#ifdef PLATFORM_3DS
-bool NativeChapter2Parallax_isDrawObject(VMContext* ctx, int32_t objectIndex) {
-    if (cache.owner != ctx) return false;
-    const char* title = ctx->dataWin->gen8.displayName;
-    if (title == nullptr || strcmp(title, "DELTARUNE Chapter 2") != 0) return false;
-    for (uint32_t i = 0; i < sizeof(cache.parallaxObjects) / sizeof(cache.parallaxObjects[0]); ++i) {
-        if (cache.parallaxObjects[i] == objectIndex) return true;
-    }
-    return false;
-}
-
-#endif
 
 static void drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color) {
     renderer->drawColor = color;
@@ -460,28 +442,6 @@ static bool parallaxerLayerCyberDraw(VMContext* ctx, RValue* outResult) {
 }
 
 void NativeChapter2CyberBackgroundDraw_register(VMContext* ctx) {
-#ifdef PLATFORM_3DS
-    static const char* const parallaxNames[] = {
-        "obj_background_cyberlines",
-        "obj_parallaxer_layer_cyber",
-        "obj_parallaxer_layer",
-        "obj_parallaxer_cyber",
-        "obj_parallaxer_cyber_2",
-        "obj_parallaxer_mansion",
-        "obj_city_parallaxStreet",
-    };
-    cache.owner = ctx;
-    for (uint32_t i = 0; i < sizeof(cache.parallaxObjects) / sizeof(cache.parallaxObjects[0]); ++i)
-        cache.parallaxObjects[i] = -1;
-    for (uint32_t i = 0; i < ctx->dataWin->objt.count; ++i) {
-        const GameObject* object = &ctx->dataWin->objt.objects[i];
-        if (!object->present) continue;
-        for (uint32_t j = 0; j < sizeof(parallaxNames) / sizeof(parallaxNames[0]); ++j) {
-            if (strcmp(object->name, parallaxNames[j]) == 0)
-                cache.parallaxObjects[j] = (int32_t)i;
-        }
-    }
-#endif
     cache.circleSegments = 0;
     cache.clouds = cache.buildings = cache.ground = cache.lights = cache.teacup = -1;
     cache.sky = cache.stars = cache.blackSky = cache.coasterTile = cache.coasterCity = -1;
