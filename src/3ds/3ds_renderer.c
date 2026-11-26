@@ -3910,16 +3910,16 @@ static void C3D_drawRectangleColor(Renderer* base, float x1, float y1, float x2,
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     if (outline) {
         base->vtable->drawLineColor(base, x1, y1, x2, y1, 1.0f, c1, c2, alpha);
-        base->vtable->drawLineColor(base, x2, y1, x2, y2, 1.0f, c2, c4, alpha);
-        base->vtable->drawLineColor(base, x2, y2, x1, y2, 1.0f, c4, c3, alpha);
-        base->vtable->drawLineColor(base, x1, y2, x1, y1, 1.0f, c3, c1, alpha);
+        base->vtable->drawLineColor(base, x2, y1, x2, y2, 1.0f, c2, c3, alpha);
+        base->vtable->drawLineColor(base, x2, y2, x1, y2, 1.0f, c3, c4, alpha);
+        base->vtable->drawLineColor(base, x1, y2, x1, y1, 1.0f, c4, c1, alpha);
         return;
     }
     N3DSDrawMapper mapper;
     C3D_mapInitAxis(&mapper, 0.0f, 0.0f, 1.0f, 1.0f);
     C3D_emitMappedSolidQuad(renderer, &mapper, x1, y1, x2, y2,
-        C3D_makeColor(c1, alpha), C3D_makeColor(c2, alpha), C3D_makeColor(c3, alpha),
-        C3D_makeColor(c4, alpha));
+        C3D_makeColor(c1, alpha), C3D_makeColor(c2, alpha), C3D_makeColor(c4, alpha),
+        C3D_makeColor(c3, alpha));
 }
 
 static void C3D_drawTriangle(Renderer* base, float x1, float y1, float x2, float y2,
