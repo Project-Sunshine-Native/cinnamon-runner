@@ -2027,6 +2027,7 @@ static void n3ds_audioSetGroupGain(
 }
 
 static void n3ds_audioSetChannelCount(MAYBE_UNUSED AudioSystem* base, MAYBE_UNUSED int32_t count) {}
+
 static void n3ds_audioGroupLoad(AudioSystem* base, int32_t groupIndex) {
     if (groupIndex <= 0 || base->dw == NULL || (uint32_t)groupIndex >= base->dw->agrp.count) return;
     while (arrlen(base->audioGroups) <= groupIndex)

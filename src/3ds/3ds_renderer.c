@@ -23,6 +23,7 @@
 #define N3DS_BOTTOM_WIDTH 320
 #define N3DS_BOTTOM_HEIGHT 240
 #define N3DS_MAX_TEXTURE_SIZE 1024
+#define N3DS_MAX_RENDER_TARGET_HEIGHT 1016
 #define N3DS_MAX_APPLICATION_SURFACE_WIDTH 640
 #define N3DS_MAX_APPLICATION_SURFACE_HEIGHT 480
 #define N3DS_TRANSFER_FLAGS                                                                        \
@@ -46,7 +47,7 @@
 #define N3DS_TPAG_BINDING_FLAG_BORROWED_SURFACE 0x08u
 #define N3DS_SURFACE_SPRITE_POOL_MAX 4u
 #define N3DS_USER_SURFACE_FORMAT GPU_RGBA4
-#define N3DS_VRAM_SURFACE_HEADROOM_BYTES (64u * 1024u)
+#define N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES (64u * 1024u)
 #define N3DS_TILE_LOOKUP_CACHE_SIZE 64u
 #define N3DS_LINE_CLIP_EPSILON 0.000001f
 #define N3DS_LINE_LENGTH_EPSILON 0.0001f
@@ -4660,7 +4661,7 @@ static uint32_t C3D_surfaceTextureBytes(const N3DSSurface* surface) {
 static bool C3D_initSurfaceTexture(N3DSSurface* surface, bool preferVram,
     bool allowLinearFallback) {
     if (preferVram &&
-        vramSpaceFree() >= C3D_surfaceTextureBytes(surface) + N3DS_VRAM_SURFACE_HEADROOM_BYTES &&
+        vramSpaceFree() >= C3D_surfaceTextureBytes(surface) + N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES &&
         C3D_TexInitVRAM(&surface->tex, surface->texWidth, surface->texHeight,
             surface->texFormat)) return true;
     return allowLinearFallback &&
@@ -4752,7 +4753,7 @@ static bool C3D_allocSurfaceVram(
     N3DSRenderer* renderer, const N3DSSurface* surface, C3D_Tex* outTex, int32_t keepID) {
     uint32_t bytes = C3D_surfaceTextureBytes(surface);
     for (;;) {
-        if (vramSpaceFree() >= bytes + N3DS_VRAM_SURFACE_HEADROOM_BYTES &&
+        if (vramSpaceFree() >= bytes + N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES &&
             C3D_TexInitVRAM(outTex, (u16)surface->texWidth, (u16)surface->texHeight,
                 surface->texFormat))
             return true;
@@ -4829,6 +4830,7 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     if (width <= 0 || height <= 0 || width > N3DS_MAX_TEXTURE_SIZE ||
         height > N3DS_MAX_TEXTURE_SIZE) return -1;
+    if (renderTarget && height > N3DS_MAX_RENDER_TARGET_HEIGHT) height = N3DS_MAX_RENDER_TARGET_HEIGHT;
     uint32_t slot = UINT32_MAX;
     for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
         if (!renderer->surfaces[i].used) {
@@ -4888,8 +4890,18 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
 
 static int32_t C3D_createSurfaceStorage(
     Renderer* base, int32_t width, int32_t height, bool renderTarget) {
-    int32_t physicalW = width > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : width;
-    int32_t physicalH = height > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : height;
+    int32_t physicalW = width;
+    int32_t physicalH = height;
+    int32_t maxH = renderTarget ? N3DS_MAX_RENDER_TARGET_HEIGHT : N3DS_MAX_TEXTURE_SIZE;
+    if (width > N3DS_MAX_TEXTURE_SIZE || height > maxH) {
+        float scaleW = (float)N3DS_MAX_TEXTURE_SIZE / (float)width;
+        float scaleH = (float)maxH / (float)height;
+        float scale = scaleW < scaleH ? scaleW : scaleH;
+        physicalW = (int32_t)((float)width * scale);
+        physicalH = (int32_t)((float)height * scale);
+        if (physicalW < 1) physicalW = 1;
+        if (physicalH < 1) physicalH = 1;
+    }
     for (;;) {
         int32_t surfaceID = C3D_createSurfaceStorageEx(base, physicalW, physicalH, width, height,
             renderTarget, N3DS_USER_SURFACE_FORMAT, true, true);
