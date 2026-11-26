@@ -421,6 +421,11 @@ static void Runner_executeResolvedEvent(Runner* runner, Instance* instance, Inst
     if (isEventBlockedByPendingRoom(runner, instance, eventType) || runner->shouldExit)
         return;
 
+#ifdef PLATFORM_3DS
+    if (NativeChapter2Battleback_shouldSkipEvent(runner, instance, eventType, eventSubtype))
+        return;
+#endif
+
     VMContext* vm = runner->vmContext;
     bool savedActionRelativeFlag = vm->actionRelativeFlag;
 
@@ -959,7 +964,7 @@ static void drawInstance(Runner* runner, Instance* inst, bool hideDefaultDraw) {
         if (codeId >= 0) {
 #ifdef PLATFORM_3DS
             if (hideDefaultDraw &&
-                NativeChapter2Parallax_isDrawObject(runner->vmContext, ownerObjectIndex))
+                NativeChapter2Battleback_isPausedObject(runner->vmContext, inst->objectIndex))
                 return;
 #endif
             Runner_executeResolvedEvent(runner, inst, nullptr, EVENT_DRAW, DRAW_NORMAL, codeId, ownerObjectIndex);
