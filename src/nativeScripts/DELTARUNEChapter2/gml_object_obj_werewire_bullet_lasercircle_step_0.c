@@ -16,7 +16,33 @@ static struct {
     int32_t parent, siner, timer, m, length, angle, speed, accel, angleChange;
     int32_t damage, grazePoints, timePoints, inv, target, grazed, grazeTimer, element;
     int32_t laser, laserVar, laserSprite, frontSprite, neoLaserSprite, neoFrontSprite, spamton;
+    int32_t destroyOnHit, tri, triAngle, partCount;
+    NativeCallBinding bulletInit;
 } cache;
+
+static bool werewireLaserCircleCreate(VMContext* ctx, RValue* outResult) {
+    Instance* self = ctx->currentCallFrame->self;
+    RValue result = NativeScript_call(ctx, &cache.bulletInit, "gml_Script_scr_bullet_init", nullptr, 0);
+    RValue_free(&result);
+    Instance_setSelfVar(self, cache.grazePoints, RValue_makeReal(3));
+    Instance_setSelfVar(self, cache.destroyOnHit, RValue_makeReal(0));
+    VMBuiltins_setVariable(ctx, self, BUILTIN_VAR_IMAGE_XSCALE, "image_xscale", RValue_makeReal(0), -1);
+    VMBuiltins_setVariable(ctx, self, BUILTIN_VAR_IMAGE_YSCALE, "image_yscale", RValue_makeReal(0), -1);
+    Instance_setSelfVar(self, cache.timer, RValue_makeReal(0));
+    Instance_setSelfVar(self, cache.tri, RValue_makeReal(1));
+    Instance_setSelfVar(self, cache.triAngle, RValue_makeReal(20));
+    Instance_setSelfVar(self, cache.angle, RValue_makeReal(180));
+    Instance_setSelfVar(self, cache.speed, RValue_makeReal(4));
+    Instance_setSelfVar(self, cache.accel, RValue_makeReal(0));
+    Instance_setSelfVar(self, cache.length, RValue_makeReal(1));
+    Instance_setSelfVar(self, cache.angleChange, RValue_makeReal(0));
+    Instance_setSelfVar(self, cache.partCount, RValue_makeReal(0));
+    Instance_setSelfVar(self, cache.siner, RValue_makeReal(0));
+    Instance_setSelfVar(self, cache.m, RValue_makeReal(2));
+    Instance_setSelfVar(self, cache.parent, RValue_makeReal(-1));
+    *outResult = RValue_makeUndefined();
+    return true;
+}
 
 static GMLReal circleReal(Instance* self, int32_t id) {
     return RValue_toReal(Instance_getSelfVar(self, id));
@@ -95,8 +121,7 @@ static bool werewireLaserCircleStep(VMContext* ctx, RValue* outResult) {
             GMLReal angle = circleReal(self, cache.angle);
             VMBuiltins_setVariable(ctx, laser, BUILTIN_VAR_IMAGE_ANGLE, "image_angle",
                 RValue_makeReal(angle), -1);
-            VMBuiltins_setVariable(ctx, laser, BUILTIN_VAR_SPEED, "speed",
-                RValue_makeReal(circleReal(self, cache.speed)), -1);
+            laser->speed = (float)circleReal(self, cache.speed);
             VMBuiltins_setVariable(ctx, laser, BUILTIN_VAR_DIRECTION, "direction",
                 RValue_makeReal(angle), -1);
             laser->friction = (float)-circleReal(self, cache.accel);
@@ -182,4 +207,11 @@ void NativeChapter2WerewireLaserCircleStep_register(VMContext* ctx) {
     cache.grazed = NativeScript_getSelfVarID(ctx, "grazed");
     cache.grazeTimer = NativeScript_getSelfVarID(ctx, "grazetimer");
     cache.element = NativeScript_getSelfVarID(ctx, "element");
+    cache.destroyOnHit = NativeScript_getSelfVarID(ctx, "destroyonhit");
+    cache.tri = NativeScript_getSelfVarID(ctx, "tri");
+    cache.triAngle = NativeScript_getSelfVarID(ctx, "tri_angle");
+    cache.partCount = NativeScript_getSelfVarID(ctx, "part_count");
+    cache.bulletInit = (NativeCallBinding)NATIVE_CALL_BINDING_INIT;
+    if (NativeScript_canCall(ctx, &cache.bulletInit, "gml_Script_scr_bullet_init"))
+        VM_registerNativeScript(ctx, "gml_Object_obj_werewire_bullet_lasercircle_Create_0", werewireLaserCircleCreate);
 }
