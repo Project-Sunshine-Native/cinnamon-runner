@@ -16,12 +16,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <3ds/allocator/vram.h>
+#include <3ds/gpu/gx.h>
 #include <stb/ds/stb_ds.h>
 #define N3DS_TOP_WIDTH 400
 #define N3DS_TOP_HEIGHT 240
 #define N3DS_BOTTOM_WIDTH 320
 #define N3DS_BOTTOM_HEIGHT 240
 #define N3DS_MAX_TEXTURE_SIZE 1024
+#define N3DS_MAX_RENDER_TARGET_HEIGHT 1016
 #define N3DS_MAX_APPLICATION_SURFACE_WIDTH 640
 #define N3DS_MAX_APPLICATION_SURFACE_HEIGHT 480
 #define N3DS_TRANSFER_FLAGS                                                                        \
@@ -45,6 +47,7 @@
 #define N3DS_TPAG_BINDING_FLAG_BORROWED_SURFACE 0x08u
 #define N3DS_SURFACE_SPRITE_POOL_MAX 4u
 #define N3DS_USER_SURFACE_FORMAT GPU_RGBA4
+#define N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES (64u * 1024u)
 #define N3DS_TILE_LOOKUP_CACHE_SIZE 64u
 #define N3DS_LINE_CLIP_EPSILON 0.000001f
 #define N3DS_LINE_LENGTH_EPSILON 0.0001f
@@ -55,9 +58,8 @@ static uint32_t C3D_addBytes(uint32_t a, uint32_t b) {
 }
 
 static bool C3D_fcramOverBudget(uint32_t residentFcramBytes, uint32_t incomingBytes) {
-    uint32_t reserveBytes = n3ds_getTextureReserveBytes();
     uint32_t projectedBytes = C3D_addBytes(residentFcramBytes, incomingBytes);
-    uint32_t projectedReserve = C3D_addBytes(reserveBytes, incomingBytes);
+    uint32_t projectedReserve = C3D_addBytes(n3ds_getTextureReserveBytes(), incomingBytes);
     if (projectedBytes > n3ds_getTextureCacheBytes()) return true;
     if (n3ds_getFreeLinearBytes() < projectedReserve) return true;
     return n3ds_getFreeHeapBudgetBytes() < projectedReserve;
@@ -273,7 +275,10 @@ typedef struct {
     bool pendingFree;
     bool samplingReady;
     bool topAligned;
+    bool wantsTarget;
+    bool pagedOut;
     uint32_t generation;
+    uint32_t lastTargetUse;
     int32_t width;
     int32_t height;
     int32_t logicalWidth;
@@ -346,6 +351,13 @@ typedef struct {
 typedef struct N3DSRenderStateSnapshot N3DSRenderStateSnapshot;
 
 typedef struct {
+    bool valid;
+    uint32_t itemIndex;
+    int32_t visibleTop, visibleBottom;
+    int32_t opaqueTop, opaqueBottom;
+} N3DSSpriteRowCache;
+
+typedef struct {
     Renderer base;
     N3DSC3DDrawContext drawContext;
     bool* premultiplyAlphaShaders;
@@ -371,6 +383,7 @@ typedef struct {
     N3DSTpagBinding* tpagBindings;
     uint32_t tpagBindingCount;
     N3DSAtlas atlas;
+    N3DSSpriteRowCache spriteRows[4];
     N3DSRoomManifest roomManifest;
     N3DSRoomTileRange* roomTileRanges;
     uint32_t roomTileRangeCount;
@@ -381,6 +394,7 @@ typedef struct {
     N3DSSurface* surfaces;
     uint32_t surfaceCount;
     uint32_t nextSurfaceGeneration;
+    uint32_t surfaceTargetClock;
     uint32_t runtimeTpagStart;
     uint32_t* freeRuntimeTpagIndices;
     int32_t* freeSurfaceSpriteSurfaces;
@@ -459,6 +473,7 @@ static void C3D_setScreenRect(N3DSRenderer* renderer, float srcLeft,
 static bool C3D_setScreenTransform(N3DSRenderer* renderer,
     const Matrix4f* worldToClip, int32_t portX, int32_t portY, int32_t portW, int32_t portH);
 static bool C3D_surfaceIdIsLive(const N3DSRenderer* renderer, int32_t surfaceID);
+static bool C3D_surfacePageIn(N3DSRenderer* renderer, int32_t surfaceID);
 static bool C3D_surfaceBindingMatches(
     const N3DSRenderer* renderer, const N3DSTpagBinding* binding);
 static void C3D_destroySurfaceSlot(N3DSRenderer* renderer, int32_t surfaceID);
@@ -489,7 +504,8 @@ static void C3D_evictAtlasPages(
 static bool C3D_atlasItemIsDrawable(const N3DSRenderer* renderer, uint32_t itemIndex);
 static void C3D_setTextureFiltering(C3D_Tex* tex, bool linear);
 static void C3D_drawTextInternal(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, uint32_t color, float alpha, float lineSeparation);
+    float xscale, float yscale, float angleDeg, const uint32_t colors[4], float alpha,
+    float lineSeparation);
 
 static void C3D_safeFrameSplit(N3DSRenderer* renderer) {
     if (renderer->currentTargetSurfaceId == INT32_MIN) return;
@@ -1512,6 +1528,7 @@ static uint32_t C3D_pickEvictableAtlasPage(
 
 static bool C3D_suspendDrawFrame(N3DSRenderer* renderer) {
     if (!renderer->drawContext.frameActive) return false;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
     bool topUsed = renderer->topTarget != NULL && renderer->topTarget->used;
     bool bottomUsed = renderer->bottomTarget != NULL && renderer->bottomTarget->used;
     n3ds_c3dFlush(&renderer->drawContext);
@@ -1555,6 +1572,13 @@ static bool C3D_evictOldestAtlasPage(N3DSRenderer* renderer, uint32_t protectedP
     C3D_finishAtlasDraws(renderer);
     C3D_unloadAtlasPage(renderer, candidate);
     return true;
+}
+
+static N3DSRenderer* gLinearReclaimRenderer = NULL;
+
+bool n3ds_reclaimLinearMemory(void) {
+    return gLinearReclaimRenderer != NULL && gLinearReclaimRenderer->atlas.loaded &&
+        C3D_evictOldestAtlasPage(gLinearReclaimRenderer, UINT32_MAX);
 }
 
 static void C3D_evictAtlasPages(
@@ -1680,7 +1704,7 @@ static bool C3D_loadAtlasPage(
                 (unsigned long)desc->pageFormat, (unsigned long)desc->dataOffset,
                 (unsigned long)desc->dataSize,
                 (unsigned long)n3ds_getFreeLinearBytes(),
-                (unsigned long)n3ds_getFreeHeapBudgetBytes());
+                (unsigned long)n3ds_getFreeHeapBytes());
         return false;
     }
 
@@ -2121,6 +2145,7 @@ fail:
 }
 
 static void C3D_destroyAtlas(N3DSRenderer* renderer) {
+    memset(renderer->spriteRows, 0, sizeof(renderer->spriteRows));
     if (renderer->atlas.pages != NULL) {
         for (uint32_t i = 0; i < renderer->atlas.pageCount; ++i) {
             if (renderer->atlas.pages[i].active)
@@ -2296,16 +2321,18 @@ static bool C3D_resolveTextureRegion(
 }
 
 static void C3D_bindTarget(N3DSRenderer* renderer, int32_t surfaceId, bool bottomScreen) {
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
 #if !N3DS_HAS_BOTTOM_TARGET
     bottomScreen = false;
 #endif
     if (surfaceId >= 0 && (uint32_t)surfaceId < renderer->surfaceCount &&
         renderer->surfaces[surfaceId].used) {
         N3DSSurface* surface = &renderer->surfaces[surfaceId];
-        C3D_RenderTarget* target = renderer->surfaces[surfaceId].target;
-        if (target == NULL) {
+        if (surface->target == NULL && !C3D_surfacePageIn(renderer, surfaceId)) {
             return;
         }
+        surface->lastTargetUse = ++renderer->surfaceTargetClock;
+        C3D_RenderTarget* target = surface->target;
         bool sameTarget = renderer->currentTargetSurfaceId == surfaceId;
         n3ds_c3dFlush(&renderer->drawContext);
         renderer->hostViewProjectionActive = false;
@@ -2411,8 +2438,17 @@ static void C3D_applyBlendState(N3DSRenderer* renderer) {
         state->blendEnabled ? C3D_blendFactorFromGml(state->blendDstAlpha) : GPU_ZERO;
     n3ds_c3dSetBlend(&renderer->drawContext, state->blendEnabled, state->blendEq,
         state->blendEq, srcColor, dstColor, srcAlpha, dstAlpha);
-    n3ds_c3dSetAlphaTest(
-        &renderer->drawContext, state->alphaTestEnabled, GPU_GREATER, state->alphaTestRef);
+    bool transparentIsNoOp = state->blendEnabled && state->blendEq == GPU_BLEND_ADD &&
+        (srcColor == GPU_SRC_ALPHA || (srcColor == GPU_ONE && state->premultiplyAlpha)) &&
+        (dstColor == GPU_ONE_MINUS_SRC_ALPHA || dstColor == GPU_ONE) &&
+        (srcAlpha == GPU_SRC_ALPHA || srcAlpha == GPU_ONE || srcAlpha == GPU_ZERO) &&
+        (dstAlpha == GPU_ONE_MINUS_SRC_ALPHA || dstAlpha == GPU_ONE);
+    if (state->alphaTestEnabled) {
+        n3ds_c3dSetAlphaTest(
+            &renderer->drawContext, true, GPU_GREATER, state->alphaTestRef);
+    } else {
+        n3ds_c3dSetAlphaTest(&renderer->drawContext, transparentIsNoOp, GPU_GREATER, 0);
+    }
     n3ds_c3dSetColorMask(&renderer->drawContext, state->colorWriteR, state->colorWriteG,
         state->colorWriteB, state->colorWriteA);
 }
@@ -2779,6 +2815,61 @@ static void C3D_emitAtlasFragment(N3DSRenderer* renderer, const N3DSAtlasItem* i
         (float)(overlapLeft - fragment->sourceX), (float)(overlapTop - fragment->sourceY),
         (float)(overlapRight - fragment->sourceX), (float)(overlapBottom - fragment->sourceY),
         clipped.left, clipped.top, clipped.right, clipped.bottom, rgba, rgba, rgba, rgba);
+}
+
+static uint32_t C3D_gradientColor(const uint32_t colors[4], float x, float y) {
+    uint32_t top = (uint32_t)Color_lerp(colors[0], colors[1], x);
+    uint32_t bottom = (uint32_t)Color_lerp(colors[2], colors[3], x);
+    return (uint32_t)Color_lerp(top, bottom, y) | (colors[0] & 0xFF000000u);
+}
+
+static void C3D_emitGlyphAtlasGradient(N3DSRenderer* renderer, const N3DSAtlasItem* item,
+    N3DSAtlasSource src, const N3DSDrawMapper* mapper, N3DSAtlasDest dst,
+    const uint32_t colors[4]) {
+    if (src.width <= 0 || src.height <= 0 || item->fragmentCount == 0u) return;
+
+    for (uint32_t i = 0; i < item->fragmentCount; ++i) {
+        uint32_t index = item->fragmentStart + i;
+        if (index >= renderer->atlas.fragmentCount) break;
+        const N3DSAtlasFragment* fragment = &renderer->atlas.fragments[index];
+        float left = fmaxf(src.x, (float)fragment->sourceX);
+        float top = fmaxf(src.y, (float)fragment->sourceY);
+        float right = fminf(src.x + src.width, (float)fragment->sourceX + fragment->width);
+        float bottom = fminf(src.y + src.height, (float)fragment->sourceY + fragment->height);
+        if (left >= right || top >= bottom) continue;
+
+        float x0 = (left - src.x) / src.width;
+        float y0 = (top - src.y) / src.height;
+        float x1 = (right - src.x) / src.width;
+        float y1 = (bottom - src.y) / src.height;
+        N3DSAtlasDest clipped = {
+            dst.left + (dst.right - dst.left) * x0,
+            dst.top + (dst.bottom - dst.top) * y0,
+            dst.left + (dst.right - dst.left) * x1,
+            dst.top + (dst.bottom - dst.top) * y1,
+        };
+        if (!C3D_mappedRectVisible(renderer, mapper,
+                clipped.left, clipped.top, clipped.right, clipped.bottom))
+            continue;
+        if (fragment->pageIndex >= renderer->atlas.pageCount ||
+            !C3D_loadRoomWantedAtlasPage(renderer, fragment->pageIndex, NULL))
+            continue;
+
+        N3DSAtlasPage* page = &renderer->atlas.pages[fragment->pageIndex];
+        N3DSUVRect region;
+        C3D_getAtlasFragmentRegion(item, fragment, page, &region);
+        uint32_t c1 = colors[0], c2 = colors[1], c3 = colors[2], c4 = colors[3];
+        if (x0 != 0.0f || y0 != 0.0f || x1 != 1.0f || y1 != 1.0f) {
+            c1 = C3D_gradientColor(colors, x0, y0);
+            c2 = C3D_gradientColor(colors, x1, y0);
+            c3 = C3D_gradientColor(colors, x0, y1);
+            c4 = C3D_gradientColor(colors, x1, y1);
+        }
+        C3D_emitMappedQuadSprite(renderer, &page->tex, &region, mapper,
+            left - fragment->sourceX, top - fragment->sourceY,
+            right - fragment->sourceX, bottom - fragment->sourceY,
+            clipped.left, clipped.top, clipped.right, clipped.bottom, c1, c2, c3, c4);
+    }
 }
 
 static void C3D_emitAtlas(N3DSRenderer* renderer, const N3DSAtlasItem* item,
@@ -3340,6 +3431,136 @@ static void C3D_drawSpritePart(Renderer* base, int32_t tpagIndex, float srcOffX,
         rgba);
 }
 
+static uint8_t C3D_textureAlpha(const C3D_Tex* tex, uint32_t x, uint32_t y) {
+    const uint8_t* pixels = tex->data;
+    uint32_t tile = (y >> 3) * (tex->width >> 3) + (x >> 3);
+    if (tex->fmt == GPU_ETC1A4) {
+        uint32_t block = ((y & 4u) >> 1) | ((x & 4u) >> 2);
+        uint32_t pixel = (x & 3u) * 4u + (y & 3u);
+        uint32_t offset = tile * 64u + block * 16u + (pixel >> 1);
+        return ((pixels[offset] >> ((pixel & 1u) * 4u)) & 15u) * 17u;
+    }
+    uint32_t morton = (x & 1u) | ((y & 1u) << 1) |
+        ((x & 2u) << 1) | ((y & 2u) << 2) |
+        ((x & 4u) << 2) | ((y & 4u) << 3);
+    uint32_t pixel = tile * 64u + morton;
+    if (tex->fmt == GPU_RGBA4) return (pixels[pixel * 2u] & 15u) * 17u;
+    if (tex->fmt == GPU_LA4) return (pixels[pixel] & 15u) * 17u;
+    return 255;
+}
+
+static bool C3D_scanSpriteRows(N3DSRenderer* renderer, const N3DSAtlasItem* item,
+    N3DSSpriteRowCache* rows) {
+    if (item->width == 0 || item->width > 1024 || item->height == 0 ||
+        item->height > 1024 || item->resizeDivisor != 1 ||
+        item->fragmentCount == 0 ||
+        item->fragmentStart >= renderer->atlas.fragmentCount ||
+        item->fragmentCount > renderer->atlas.fragmentCount - item->fragmentStart)
+        return false;
+
+    rows->visibleTop = item->height;
+    rows->visibleBottom = 0;
+    rows->opaqueTop = rows->opaqueBottom = 0;
+    int32_t opaqueStart = 0;
+    for (uint32_t y = 0; y < item->height; ++y) {
+        uint8_t alpha[1024] = {0};
+        for (uint32_t i = 0; i < item->fragmentCount; ++i) {
+            const N3DSAtlasFragment* fragment =
+                &renderer->atlas.fragments[item->fragmentStart + i];
+            if (y < fragment->sourceY || y >= (uint32_t)fragment->sourceY + fragment->height)
+                continue;
+            if (fragment->pageIndex >= renderer->atlas.pageCount ||
+                (uint32_t)fragment->sourceX + fragment->width > item->width ||
+                !C3D_loadRoomWantedAtlasPage(renderer, fragment->pageIndex, NULL))
+                return false;
+            const N3DSAtlasPage* page = &renderer->atlas.pages[fragment->pageIndex];
+            const C3D_Tex* tex = &page->tex;
+            if (page->inVram || (tex->fmt != GPU_RGBA4 && tex->fmt != GPU_LA4 &&
+                tex->fmt != GPU_L4 && tex->fmt != GPU_ETC1 && tex->fmt != GPU_ETC1A4) ||
+                (uint32_t)fragment->x + fragment->width > tex->width ||
+                (uint32_t)fragment->y + fragment->height > tex->height)
+                return false;
+            uint32_t textureY = fragment->y + y - fragment->sourceY;
+            for (uint32_t x = 0; x < fragment->width; ++x) {
+                uint8_t sample = C3D_textureAlpha(tex, fragment->x + x, textureY);
+                if (sample > alpha[fragment->sourceX + x])
+                    alpha[fragment->sourceX + x] = sample;
+            }
+        }
+        uint8_t minimum = 255, maximum = 0;
+        for (uint32_t x = 0; x < item->width; ++x) {
+            if (alpha[x] < minimum) minimum = alpha[x];
+            if (alpha[x] > maximum) maximum = alpha[x];
+        }
+        if (maximum != 0) {
+            if ((int32_t)y < rows->visibleTop) rows->visibleTop = y;
+            rows->visibleBottom = y + 1;
+        }
+        if (minimum != 255) opaqueStart = y + 1;
+        else if ((int32_t)y + 1 - opaqueStart > rows->opaqueBottom - rows->opaqueTop) {
+            rows->opaqueTop = opaqueStart;
+            rows->opaqueBottom = y + 1;
+        }
+    }
+    return true;
+}
+
+bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, bool shadowFollows) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSRenderState* state = &renderer->renderState;
+    N3DSAtlasItem* item;
+    if (base->texFilter || !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
+        state->blendSrc != bm_src_alpha || state->blendDst != bm_inv_src_alpha ||
+        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_inv_src_alpha ||
+        (shadowFollows && alpha != 1.0f) ||
+        (state->alphaTestEnabled && state->alphaTestRef == 255) ||
+        !C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item))
+        return false;
+    const TexturePageItem* tpag = &base->dataWin->tpag.items[tpagIndex];
+    if (tpag->targetX != 0 || tpag->targetY != 0 ||
+        item->width != tpag->sourceWidth || item->height != tpag->sourceHeight ||
+        item->width != tpag->boundingWidth || item->height != tpag->boundingHeight)
+        return false;
+
+    uint32_t itemIndex = renderer->tpagBindings[tpagIndex].atlasItemIndex;
+    N3DSSpriteRowCache* rows = NULL;
+    for (uint32_t i = 0; i < 4; ++i) {
+        if (renderer->spriteRows[i].valid && renderer->spriteRows[i].itemIndex == itemIndex) {
+            rows = &renderer->spriteRows[i];
+            break;
+        }
+    }
+    if (rows == NULL) {
+        for (uint32_t i = 0; i < 4; ++i) {
+            if (!renderer->spriteRows[i].valid) {
+                rows = &renderer->spriteRows[i];
+                break;
+            }
+        }
+        if (rows == NULL || !C3D_scanSpriteRows(renderer, item, rows)) return false;
+        rows->itemIndex = itemIndex;
+        rows->valid = true;
+    }
+
+    float top = rows->visibleTop;
+    float bottom = fminf(height, rows->visibleBottom);
+    if (top >= bottom) return true;
+    float hiddenTop = bottom;
+    float hiddenBottom = bottom;
+    if (shadowFollows && rows->opaqueTop < rows->opaqueBottom) {
+        hiddenTop = fmaxf(top, fminf(bottom, rows->opaqueTop + 8));
+        hiddenBottom = fmaxf(top, fminf(bottom, rows->opaqueBottom + 8));
+    }
+    if (top < hiddenTop)
+        C3D_drawSpritePart(base, tpagIndex, 0, top, width, hiddenTop - top,
+            x, y + top, 1, 1, 0, 0, 0, color, alpha);
+    if (hiddenBottom < bottom)
+        C3D_drawSpritePart(base, tpagIndex, 0, hiddenBottom, width, bottom - hiddenBottom,
+            x, y + hiddenBottom, 1, 1, 0, 0, 0, color, alpha);
+    return true;
+}
+
 bool C3D_drawPackedTilemap(Renderer* base, const RoomLayerTilesData* data,
     const Background* tileset, uint32_t firstX, uint32_t firstY, uint32_t endX,
     uint32_t endY, float offsetX, float offsetY) {
@@ -3815,14 +4036,10 @@ static void C3D_drawLinePoint(Renderer* base, N3DSRenderer* renderer, N3DSVec2 p
         (N3DSVec2){opposite.x - point.x, opposite.y - point.y}, C3D_makeColor(color, alpha));
 }
 
-static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, float y2,
-    float width, uint32_t color1, uint32_t color2, float alpha) {
-    assert(base != NULL);
+static void C3D_drawPreparedLine(Renderer* base, float x1, float y1, float x2, float y2,
+    float width, uint32_t color1, float alpha, uint32_t rgba1, uint32_t rgba2,
+    float minimumWidth, bool hostViewProjectionActive, bool renderSpace) {
     N3DSRenderer* renderer = (N3DSRenderer*)base;
-    bool hostViewProjectionActive = renderer->hostViewProjectionActive;
-    bool renderSpace = renderer->screenTransformActive || hostViewProjectionActive;
-    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
-    width = fmaxf(width, minimumWidth);
     bool pixelSpace = renderSpace ||
         renderer->currentTargetSurfaceId == RENDER_TARGET_HOST_FRAMEBUFFER;
     if (!renderSpace && renderer->viewCullActive) {
@@ -3850,9 +4067,43 @@ static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, floa
         for (uint32_t i = 0u; i < 4u; ++i)
             C3D_unprojectHost(&renderer->screenTransform, &quad[i]);
     }
+    n3ds_c3dLineQuad(&renderer->drawContext, quad, rgba1, rgba2);
+}
+
+static void C3D_drawLineColor(Renderer* base, float x1, float y1, float x2, float y2,
+    float width, uint32_t color1, uint32_t color2, float alpha) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    bool hostProjection = renderer->hostViewProjectionActive;
+    bool renderSpace = renderer->screenTransformActive || hostProjection;
+    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
     uint32_t rgba1 = C3D_makeColor(color1, alpha);
     uint32_t rgba2 = color1 == color2 ? rgba1 : C3D_makeColor(color2, alpha);
-    n3ds_c3dLineQuad(&renderer->drawContext, quad, rgba1, rgba2);
+    C3D_drawPreparedLine(base, x1, y1, x2, y2, fmaxf(width, minimumWidth),
+        color1, alpha, rgba1, rgba2, minimumWidth, hostProjection, renderSpace);
+}
+
+void C3D_drawLineSegments(Renderer* base, const float (*segments)[4], uint32_t count,
+    float width, uint32_t color, float alpha, const float clipRect[4]) {
+    if (count == 0) return;
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    bool hostProjection = renderer->hostViewProjectionActive;
+    bool renderSpace = renderer->screenTransformActive || hostProjection;
+    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
+    width = fmaxf(width, minimumWidth);
+    uint32_t rgba = C3D_makeColor(color, alpha);
+    float margin = width * 2.0f + 2.0f;
+    for (uint32_t i = 0; i < count; ++i) {
+        float x1 = segments[i][0], y1 = segments[i][1];
+        float x2 = segments[i][2], y2 = segments[i][3];
+        if (clipRect != NULL && !renderSpace &&
+            !C3D_clipLineToRect(&x1, &y1, &x2, &y2, clipRect[0] - margin,
+                clipRect[1] - margin, clipRect[2] + margin, clipRect[3] + margin))
+            continue;
+        C3D_drawPreparedLine(base, x1, y1, x2, y2, width, color, alpha, rgba, rgba, minimumWidth,
+            hostProjection, renderSpace);
+    }
 }
 
 static void C3D_drawLine(Renderer* base, float x1, float y1, float x2, float y2,
@@ -3878,7 +4129,7 @@ static bool C3D_resolveFontState(
 
 static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
     const N3DSFontState* state, FontGlyph* glyph, float cursorX, float cursorY,
-    const N3DSDrawMapper* mapper, uint32_t rgba) {
+    const N3DSDrawMapper* mapper, uint32_t rgba, const uint32_t* colors) {
     if (dataWin == NULL || state == NULL || glyph == NULL || glyph->sourceWidth == 0u ||
         glyph->sourceHeight == 0u)
         return false;
@@ -3917,6 +4168,18 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
 
     float right = left + (float)srcW;
     float bottom = top + (float)srcH;
+    if (colors != NULL) {
+        N3DSAtlasItem* item = state->atlasItem;
+        if (item == NULL && (uint32_t)tpagIndex < renderer->tpagBindingCount &&
+            renderer->tpagBindings[tpagIndex].source == N3DS_TPAG_SOURCE_ATLAS)
+            (void)C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item);
+        if (item != NULL) {
+            C3D_emitGlyphAtlasGradient(renderer, item,
+                (N3DSAtlasSource){srcX, srcY, srcW, srcH}, mapper,
+                (N3DSAtlasDest){left, top, right, bottom}, colors);
+            return true;
+        }
+    }
     if (state->atlasItem != NULL) {
         C3D_emitAtlas(renderer, state->atlasItem,
             (N3DSAtlasSource){srcX, srcY, srcW, srcH}, mapper,
@@ -3930,6 +4193,10 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
         return true;
     }
 
+    uint32_t c1 = colors != NULL ? colors[0] : rgba;
+    uint32_t c2 = colors != NULL ? colors[1] : rgba;
+    uint32_t c3 = colors != NULL ? colors[2] : rgba;
+    uint32_t c4 = colors != NULL ? colors[3] : rgba;
     C3D_Tex* tex = NULL;
     N3DSUVRect* region = NULL;
     if (!C3D_resolveTextureRegion(renderer, tpagIndex, &tex, &region)) return false;
@@ -3942,18 +4209,19 @@ static bool C3D_drawGlyph(N3DSRenderer* renderer, DataWin* dataWin,
                 &dataWin->tpag.items[tpagIndex], &renderer->surfaces[surfaceID]);
             C3D_emitMappedQuadSprite(renderer, tex, &contentRegion, mapper, (float)srcX,
                 (float)srcY, (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom,
-                rgba, rgba, rgba, rgba);
+                c1, c2, c3, c4);
             return true;
         }
     }
     C3D_emitMappedQuadSprite(renderer, tex, region, mapper, (float)srcX, (float)srcY,
-        (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom, rgba, rgba, rgba,
-        rgba);
+        (float)(srcX + srcW), (float)(srcY + srcH), left, top, right, bottom, c1, c2, c3,
+        c4);
     return true;
 }
 
 static void C3D_drawTextInternal(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, uint32_t color, float alpha, float lineSeparation) {
+    float xscale, float yscale, float angleDeg, const uint32_t colors[4], float alpha,
+    float lineSeparation) {
     if (text == NULL || alpha <= 0.0f) return;
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     DataWin* dataWin = base->dataWin;
@@ -3993,7 +4261,16 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
         Matrix4f_setTransform2D(&transform, x, y, scaleX, scaleY, -angleDeg * (float)M_PI / 180.0f);
         C3D_mapInitAffine(&mapper, &transform);
     }
-    uint32_t rgba = C3D_makeColor(color, alpha);
+    uint32_t rgba = C3D_makeColor(colors[0], alpha);
+    bool horizontalGradient = colors[0] != colors[1] || colors[2] != colors[3];
+    bool gradient = horizontalGradient || colors[0] != colors[2];
+    uint32_t gradientColors[4];
+    if (gradient) {
+        gradientColors[0] = rgba;
+        gradientColors[1] = C3D_makeColor(colors[1], alpha);
+        gradientColors[2] = C3D_makeColor(colors[3], alpha);
+        gradientColors[3] = C3D_makeColor(colors[2], alpha);
+    }
 
     float cursorY = valignOffset - (float)font->ascenderOffset;
     int32_t lineStart = 0;
@@ -4002,13 +4279,14 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
         while (lineEnd < textLen && !TextUtils_isNewlineChar(text[lineEnd]))
             lineEnd++;
         int32_t lineLen = lineEnd - lineStart;
-        float lineWidth = (base->drawHalign == 1 || base->drawHalign == 2)
+        float lineWidth = (base->drawHalign == 1 || base->drawHalign == 2 || horizontalGradient)
             ? TextUtils_measureLineWidth(font, text + lineStart, lineLen) : 0.0f;
         float cursorX = 0.0f;
         if (base->drawHalign == 1)
             cursorX = -lineWidth * 0.5f;
         else if (base->drawHalign == 2)
             cursorX = -lineWidth;
+        float gradientX = 0.0f;
 
         int32_t pos = 0;
         bool hasCh = pos < lineLen;
@@ -4019,10 +4297,24 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
             bool hasNext = pos < lineLen;
             if (hasNext) nextCh = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
             if (glyph != NULL) {
-                bool drew = C3D_drawGlyph(
-                    renderer, dataWin, &state, glyph, cursorX, cursorY, &mapper, rgba);
-                cursorX += (float)glyph->shift;
-                if (drew && hasNext) cursorX += TextUtils_getKerningOffset(glyph, nextCh);
+                float advance = (float)glyph->shift;
+                if (horizontalGradient) {
+                    float left = lineWidth > 0.0f ? gradientX / lineWidth : 0.0f;
+                    float right = lineWidth > 0.0f ? (gradientX + advance) / lineWidth : 1.0f;
+                    gradientColors[0] = C3D_makeColor(Color_lerp(colors[0], colors[1], left), alpha);
+                    gradientColors[1] = C3D_makeColor(Color_lerp(colors[0], colors[1], right), alpha);
+                    gradientColors[2] = C3D_makeColor(Color_lerp(colors[3], colors[2], left), alpha);
+                    gradientColors[3] = C3D_makeColor(Color_lerp(colors[3], colors[2], right), alpha);
+                }
+                bool drew = C3D_drawGlyph(renderer, dataWin, &state, glyph, cursorX,
+                    cursorY, &mapper, rgba, gradient ? gradientColors : NULL);
+                cursorX += advance;
+                gradientX += advance;
+                if (drew && hasNext) {
+                    float kern = TextUtils_getKerningOffset(glyph, nextCh);
+                    cursorX += kern;
+                    gradientX += kern;
+                }
             }
             ch = nextCh;
             hasCh = hasNext;
@@ -4036,7 +4328,9 @@ static void C3D_drawTextInternal(Renderer* base, const char* text, float x, floa
 static void C3D_drawText(Renderer* base, const char* text, float x, float y, float xscale,
     float yscale, float angleDeg, float lineSeparation) {
     assert(base != NULL);
-    C3D_drawTextInternal(base, text, x, y, xscale, yscale, angleDeg, base->drawColor,
+    uint32_t colors[4] = {
+        base->drawColor, base->drawColor, base->drawColor, base->drawColor};
+    C3D_drawTextInternal(base, text, x, y, xscale, yscale, angleDeg, colors,
         base->drawAlpha, lineSeparation);
 }
 
@@ -4056,7 +4350,27 @@ static void C3D_drawGlyphFast(Renderer* base, uint16_t character, float x, float
     C3D_mapInitAxis(&mapper, x, y, xscale * font->scaleX, yscale * font->scaleY);
     uint32_t rgba = C3D_makeColor(base->drawColor, base->drawAlpha);
     (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
-        -(float)font->ascenderOffset, &mapper, rgba);
+        -(float)font->ascenderOffset, &mapper, rgba, NULL);
+}
+
+void C3D_drawGradientGlyph(Renderer* base, const RendererGlyph* glyph, uint32_t bottomColor) {
+    if (base->drawAlpha <= 0.0f) return;
+    int32_t fontIndex = base->drawFont;
+    if (fontIndex < 0 || (uint32_t)fontIndex >= base->dataWin->font.count) return;
+
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    Font* font = &base->dataWin->font.fonts[fontIndex];
+    FontGlyph* fontGlyph = TextUtils_findGlyph(font, glyph->character);
+    N3DSFontState state;
+    if (fontGlyph == NULL || !C3D_resolveFontState(renderer, base->dataWin, font, &state)) return;
+
+    N3DSDrawMapper mapper;
+    C3D_mapInitAxis(&mapper, glyph->x, glyph->y, font->scaleX, font->scaleY);
+    uint32_t top = C3D_makeColor(glyph->color, base->drawAlpha);
+    uint32_t bottom = C3D_makeColor(bottomColor, base->drawAlpha);
+    uint32_t colors[4] = {top, top, bottom, bottom};
+    (void)C3D_drawGlyph(renderer, base->dataWin, &state, fontGlyph, 0.0f,
+        -(float)font->ascenderOffset, &mapper, top, colors);
 }
 
 static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, int32_t count,
@@ -4081,7 +4395,7 @@ static void C3D_drawGlyphRunFast(Renderer* base, const RendererGlyph* glyphs, in
         C3D_mapInitAxis(&mapper, glyphs[i].x, glyphs[i].y, scaleX, scaleY);
         uint32_t rgba = C3D_makeColor(glyphs[i].color, base->drawAlpha);
         (void)C3D_drawGlyph(renderer, base->dataWin, &state, glyph, 0.0f,
-            cursorY, &mapper, rgba);
+            cursorY, &mapper, rgba, NULL);
     }
 }
 
@@ -4110,17 +4424,19 @@ void C3D_drawGlyphGlowRun(Renderer* base, const RendererGlyph* glyphs, int32_t c
             if (alpha[group] <= 0.0f) continue;
             N3DSDrawMapper mapper;
             C3D_mapInitAxis(&mapper, glyphs[pass].x, glyphs[pass].y, font->scaleX, font->scaleY);
-            (void)C3D_drawGlyph(renderer, dataWin, &state, glyph, 0.0f, cursorY, &mapper, rgba[group]);
+            (void)C3D_drawGlyph(renderer, dataWin, &state, glyph, 0.0f, cursorY, &mapper,
+                rgba[group], NULL);
         }
     }
 }
 
 static void C3D_drawTextColor(Renderer* base, const char* text, float x, float y,
-    float xscale, float yscale, float angleDeg, int32_t c1, MAYBE_UNUSED int32_t c2,
-    MAYBE_UNUSED int32_t c3, MAYBE_UNUSED int32_t c4, float alpha, float lineSeparation) {
+    float xscale, float yscale, float angleDeg, int32_t c1, int32_t c2,
+    int32_t c3, int32_t c4, float alpha, float lineSeparation) {
     assert(base != NULL);
+    uint32_t colors[4] = {(uint32_t)c1, (uint32_t)c2, (uint32_t)c3, (uint32_t)c4};
     C3D_drawTextInternal(
-        base, text, x, y, xscale, yscale, angleDeg, (uint32_t)c1, alpha, lineSeparation);
+        base, text, x, y, xscale, yscale, angleDeg, colors, alpha, lineSeparation);
 }
 
 static void C3D_flush(MAYBE_UNUSED Renderer* base) {
@@ -4330,20 +4646,29 @@ static void C3D_blitAppSurface(N3DSRenderer* renderer) {
     C3D_restoreBlendState(renderer, &savedState);
 }
 
+static uint32_t C3D_surfaceTextureBytes(const N3DSSurface* surface) {
+    uint32_t bits;
+    switch (surface->texFormat) {
+    case GPU_RGBA8: bits = 32u; break;
+    case GPU_RGB8: bits = 24u; break;
+    case GPU_L8: case GPU_A8: case GPU_LA4: case GPU_ETC1A4: bits = 8u; break;
+    case GPU_L4: case GPU_A4: case GPU_ETC1: bits = 4u; break;
+    default: bits = 16u; break;
+    }
+    return (uint32_t)surface->texWidth * (uint32_t)surface->texHeight * bits / 8u;
+}
+
 static bool C3D_initSurfaceTexture(N3DSSurface* surface, bool preferVram,
     bool allowLinearFallback) {
     if (preferVram &&
+        vramSpaceFree() >= C3D_surfaceTextureBytes(surface) + N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES &&
         C3D_TexInitVRAM(&surface->tex, surface->texWidth, surface->texHeight,
             surface->texFormat)) return true;
     return allowLinearFallback &&
         C3D_TexInit(&surface->tex, surface->texWidth, surface->texHeight, surface->texFormat);
 }
 
-static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface,
-    bool preferVram, bool allowLinearFallback) {
-    if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
-    if (!allowLinearFallback) return false;
-
+static bool C3D_reclaimPendingSurfaces(N3DSRenderer* renderer) {
     bool reclaimed = false;
     ptrdiff_t pendingCount = arrlen(renderer->pendingSurfaceFrees);
     ptrdiff_t retainedCount = 0;
@@ -4362,6 +4687,123 @@ static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface
     } else {
         arrsetlen(renderer->pendingSurfaceFrees, retainedCount);
     }
+    return reclaimed;
+}
+
+static bool C3D_surfacePageOut(N3DSRenderer* renderer, int32_t surfaceID) {
+    N3DSSurface* surface = &renderer->surfaces[surfaceID];
+    C3D_Tex paged;
+    bool allocated = C3D_TexInit(&paged, (u16)surface->texWidth, (u16)surface->texHeight,
+        surface->texFormat);
+    while (!allocated && C3D_evictOldestAtlasPage(renderer, UINT32_MAX)) {
+        allocated = C3D_TexInit(&paged, (u16)surface->texWidth, (u16)surface->texHeight,
+            surface->texFormat);
+    }
+    if (!allocated) return false;
+    C3D_TexFlush(&paged);
+
+    surface = &renderer->surfaces[surfaceID];
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
+    n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
+    C3D_SyncTextureCopy((u32*)surface->tex.data, 0, (u32*)paged.data, 0, surface->tex.size, 8);
+    C3D_RenderTargetDelete(surface->target);
+    surface->target = NULL;
+    C3D_TexDelete(&surface->tex);
+    surface->tex = paged;
+    C3D_setTextureFiltering(&surface->tex, renderer->base.texFilter);
+    C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    surface->pagedOut = true;
+    surface->samplingReady = true;
+    if (resumeFrame) C3D_resumeDrawFrame(renderer);
+    // logEvent("vram", "pageout id=%ld size=%lu free=%lu", (long)surfaceID,
+        // (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
+    return true;
+}
+
+static bool C3D_pageOutLruSurface(N3DSRenderer* renderer, int32_t keepID) {
+    if (C3D_reclaimPendingSurfaces(renderer)) return true;
+    while (arrlen(renderer->freeSurfaceSpriteSurfaces) > 0) {
+        int32_t pooledID =
+            renderer->freeSurfaceSpriteSurfaces[arrlen(renderer->freeSurfaceSpriteSurfaces) - 1];
+        arrsetlen(
+            renderer->freeSurfaceSpriteSurfaces, arrlen(renderer->freeSurfaceSpriteSurfaces) - 1);
+        if (pooledID != keepID && pooledID != renderer->currentTargetSurfaceId &&
+            C3D_surfaceIdIsLive(renderer, pooledID)) {
+            C3D_destroySurfaceSlotNow(renderer, pooledID);
+            return true;
+        }
+    }
+    int32_t candidate = -1;
+    uint32_t oldest = UINT32_MAX;
+    for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
+        const N3DSSurface* surface = &renderer->surfaces[i];
+        int32_t surfaceID = (int32_t)i;
+        if (surfaceID == keepID || surfaceID == renderer->currentTargetSurfaceId ||
+            surfaceID == renderer->applicationSurfaceId || surfaceID == renderer->bottomSurfaceId ||
+            !surface->used || surface->pendingFree || !surface->wantsTarget || surface->pagedOut ||
+            surface->target == NULL || surface->lastTargetUse >= oldest)
+            continue;
+        oldest = surface->lastTargetUse;
+        candidate = surfaceID;
+    }
+    return candidate >= 0 && C3D_surfacePageOut(renderer, candidate);
+}
+
+static bool C3D_allocSurfaceVram(
+    N3DSRenderer* renderer, const N3DSSurface* surface, C3D_Tex* outTex, int32_t keepID) {
+    uint32_t bytes = C3D_surfaceTextureBytes(surface);
+    for (;;) {
+        if (vramSpaceFree() >= bytes + N3DS_VRAM_SURFACE_WIGGLEROOM_IDK_WHAT_ELSE_TO_CALL_IT_LOL_BYTES &&
+            C3D_TexInitVRAM(outTex, (u16)surface->texWidth, (u16)surface->texHeight,
+                surface->texFormat))
+            return true;
+        if (!C3D_pageOutLruSurface(renderer, keepID)) return false;
+    }
+}
+
+static bool C3D_surfacePageIn(N3DSRenderer* renderer, int32_t surfaceID) {
+    if (surfaceID < 0 || (uint32_t)surfaceID >= renderer->surfaceCount ||
+        !renderer->surfaces[surfaceID].used || !renderer->surfaces[surfaceID].wantsTarget)
+        return false;
+    if (!renderer->surfaces[surfaceID].pagedOut) return renderer->surfaces[surfaceID].target != NULL;
+
+    C3D_Tex resident;
+    if (!C3D_allocSurfaceVram(renderer, &renderer->surfaces[surfaceID], &resident, surfaceID))
+        return false;
+    N3DSSurface* surface = &renderer->surfaces[surfaceID];
+    bool resumeFrame = C3D_suspendDrawFrame(renderer);
+    n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
+    C3D_SyncTextureCopy((u32*)surface->tex.data, 0, (u32*)resident.data, 0, surface->tex.size, 8);
+    C3D_Tex paged = surface->tex;
+    surface->tex = resident;
+    surface->target = C3D_RenderTargetCreateFromTex(&surface->tex, GPU_TEXFACE_2D, 0, -1);
+    if (resumeFrame) {
+        C3D_resumeDrawFrame(renderer);
+    } else {
+        C3D_FrameBegin(0);
+        C3D_FrameEnd(0);
+    }
+    if (surface->target == NULL) {
+        C3D_TexDelete(&surface->tex);
+        surface->tex = paged;
+        return false;
+    }
+    C3D_TexDelete(&paged);
+    C3D_setTextureFiltering(&surface->tex, renderer->base.texFilter);
+    C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    surface->pagedOut = false;
+    surface->samplingReady = true;
+    // logEvent("vram", "pagein id=%ld size=%lu free=%lu", (long)surfaceID,
+        // (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
+    return true;
+}
+
+static bool C3D_allocSurfaceTexture(N3DSRenderer* renderer, N3DSSurface* surface,
+    bool preferVram, bool allowLinearFallback) {
+    if (C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
+    if (!allowLinearFallback) return false;
+
+    bool reclaimed = C3D_reclaimPendingSurfaces(renderer);
     if (reclaimed &&
         C3D_initSurfaceTexture(surface, preferVram, allowLinearFallback)) return true;
 
@@ -4388,6 +4830,7 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     if (width <= 0 || height <= 0 || width > N3DS_MAX_TEXTURE_SIZE ||
         height > N3DS_MAX_TEXTURE_SIZE) return -1;
+    if (renderTarget && height > N3DS_MAX_RENDER_TARGET_HEIGHT) height = N3DS_MAX_RENDER_TARGET_HEIGHT;
     uint32_t slot = UINT32_MAX;
     for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
         if (!renderer->surfaces[i].used) {
@@ -4407,14 +4850,20 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     surface->texHeight = n3ds_nextPow2(height);
     surface->texFormat = texFormat;
     surface->transferFormat = C3D_transferFormatForTex(texFormat);
-    if (!C3D_allocSurfaceTexture(renderer, surface, preferVram,
-        allowLinearFallback)) {
+    bool inVram = renderTarget && preferVram &&
+        C3D_allocSurfaceVram(renderer, surface, &surface->tex, (int32_t)slot);
+    if (!inVram && ((renderTarget && !allowLinearFallback) ||
+        !C3D_allocSurfaceTexture(renderer, surface, renderTarget ? false : preferVram,
+            allowLinearFallback))) {
+        // logEvent("vram", "create failed slot=%ld phys %ldx%ld tex %ldx%ld fmt=%ld vramFree=%lu linearFree=%lu",
+            // (long)slot, (long)width, (long)height, (long)surface->texWidth, (long)surface->texHeight,
+            // (long)texFormat, (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
         memset(surface, 0, sizeof(*surface));
         return -1;
     }
-    if (renderTarget)
+    if (inVram)
         surface->target = C3D_RenderTargetCreateFromTex(&surface->tex, GPU_TEXFACE_2D, 0, -1);
-    if (renderTarget && surface->target == NULL) {
+    if (inVram && surface->target == NULL) {
         C3D_TexDelete(&surface->tex);
         memset(surface, 0, sizeof(*surface));
         return -1;
@@ -4423,27 +4872,35 @@ static int32_t C3D_createSurfaceStorageEx(Renderer* base, int32_t width, int32_t
     C3D_TexSetWrap(&surface->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     surface->used = true;
     surface->samplingReady = true;
+    surface->wantsTarget = renderTarget;
+    surface->pagedOut = renderTarget && !inVram;
+    surface->lastTargetUse = ++renderer->surfaceTargetClock;
     surface->generation = ++renderer->nextSurfaceGeneration;
     if (surface->generation == 0u) surface->generation = ++renderer->nextSurfaceGeneration;
     surface->width = width;
     surface->height = height;
     surface->logicalWidth = logicalWidth > 0 ? logicalWidth : width;
     surface->logicalHeight = logicalHeight > 0 ? logicalHeight : height;
+    // logEvent("vram", "create id=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld fmt=%ld rt=%d data=%p size=%lu free=%lu",
+        // (long)slot, (long)width, (long)height, (long)surface->texWidth, (long)surface->texHeight,
+        // (long)surface->logicalWidth, (long)surface->logicalHeight, (long)texFormat, (int)renderTarget,
+        // surface->tex.data, (unsigned long)surface->tex.size, (unsigned long)vramSpaceFree());
     return (int32_t)slot;
 }
 
 static int32_t C3D_createSurfaceStorage(
     Renderer* base, int32_t width, int32_t height, bool renderTarget) {
-    int32_t physicalW = width > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : width;
-    int32_t physicalH = height > N3DS_MAX_TEXTURE_SIZE ? N3DS_MAX_TEXTURE_SIZE : height;
-    if (renderTarget && physicalW > 0 && physicalH > 0 &&
-        (physicalW > 8 || physicalH > 8)) {
-        uint32_t textureBytes =
-            (uint32_t)n3ds_nextPow2(physicalW) * n3ds_nextPow2(physicalH) * 2u;
-        if (C3D_fcramOverBudget(0, textureBytes)) {
-            physicalW = (physicalW + 1) / 2;
-            physicalH = (physicalH + 1) / 2;
-        }
+    int32_t physicalW = width;
+    int32_t physicalH = height;
+    int32_t maxH = renderTarget ? N3DS_MAX_RENDER_TARGET_HEIGHT : N3DS_MAX_TEXTURE_SIZE;
+    if (width > N3DS_MAX_TEXTURE_SIZE || height > maxH) {
+        float scaleW = (float)N3DS_MAX_TEXTURE_SIZE / (float)width;
+        float scaleH = (float)maxH / (float)height;
+        float scale = scaleW < scaleH ? scaleW : scaleH;
+        physicalW = (int32_t)((float)width * scale);
+        physicalH = (int32_t)((float)height * scale);
+        if (physicalW < 1) physicalW = 1;
+        if (physicalH < 1) physicalH = 1;
     }
     for (;;) {
         int32_t surfaceID = C3D_createSurfaceStorageEx(base, physicalW, physicalH, width, height,
@@ -4553,7 +5010,7 @@ static uint32_t C3D_allocRuntimeTpag(N3DSRenderer* renderer, DataWin* dw) {
 
 static bool C3D_recycleSpriteSurface(N3DSRenderer* renderer, int32_t surfaceID) {
     if (!C3D_surfaceIdIsLive(renderer, surfaceID) ||
-        renderer->surfaces[surfaceID].target == NULL)
+        !renderer->surfaces[surfaceID].wantsTarget)
         return false;
     for (ptrdiff_t i = 0; i < arrlen(renderer->freeSurfaceSpriteSurfaces); ++i) {
         if (renderer->freeSurfaceSpriteSurfaces[i] == surfaceID) return true;
@@ -4572,7 +5029,7 @@ static int32_t C3D_allocSpriteSurface(
     for (ptrdiff_t i = arrlen(renderer->freeSurfaceSpriteSurfaces) - 1; i >= 0; --i) {
         int32_t surfaceID = renderer->freeSurfaceSpriteSurfaces[i];
         if (!C3D_surfaceIdIsLive(renderer, surfaceID) ||
-            renderer->surfaces[surfaceID].target == NULL) {
+            !renderer->surfaces[surfaceID].wantsTarget) {
             arrdel(renderer->freeSurfaceSpriteSurfaces, i);
             continue;
         }
@@ -4620,10 +5077,15 @@ static void C3D_destroySurfaceSlotNow(N3DSRenderer* renderer, int32_t surfaceID)
     if (renderer->currentTargetSurfaceId == surfaceID) renderer->currentTargetSurfaceId = INT32_MIN;
     if (renderer->hostCaptureSurfaceId == surfaceID) renderer->hostCaptureSurfaceId = -1;
     if (renderer->bottomSurfaceId == surfaceID) renderer->bottomSurfaceId = -1;
+    // void* logData = surface->tex.data;
+    // unsigned long logSize = (unsigned long)surface->tex.size;
     n3ds_c3dInvalidateTexture(&renderer->drawContext, &surface->tex);
     if (surface->target != NULL) C3D_RenderTargetDelete(surface->target);
     C3D_TexDelete(&surface->tex);
     memset(surface, 0, sizeof(*surface));
+    // logEvent("vram", "destroy id=%ld data=%p size=%lu app=%ld capture=%ld free=%lu",
+        // (long)surfaceID, logData, logSize, (long)renderer->applicationSurfaceId,
+        // (long)renderer->hostCaptureSurfaceId, (unsigned long)vramSpaceFree());
     if (resumeFrame) C3D_resumeDrawFrame(renderer);
 }
 
@@ -4702,6 +5164,7 @@ static bool C3D_transferSurface(
     if (source->target == NULL || dest->target == NULL ||
         source->target->frameBuf.colorBuf == NULL || dest->target->frameBuf.colorBuf == NULL)
         return false;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
     n3ds_c3dFlush(&renderer->drawContext);
     if (renderer->currentTargetSurfaceId == sourceID) {
         n3ds_c3dFrameSplit(&renderer->drawContext);
@@ -4743,7 +5206,7 @@ static int32_t C3D_snapshotSurface(Renderer* base, int32_t sourceID) {
         if (capture->width != sourceW || capture->height != sourceH ||
             C3D_surfaceLogicalWidth(capture) != sourceLogicalW ||
             C3D_surfaceLogicalHeight(capture) != sourceLogicalH ||
-            capture->texFormat != sourceFormat || capture->target == NULL) {
+            capture->texFormat != sourceFormat || !capture->wantsTarget) {
             C3D_destroySurfaceSlot(renderer, renderer->hostCaptureSurfaceId);
         }
     }
@@ -4766,6 +5229,7 @@ static int32_t C3D_snapshotSurface(Renderer* base, int32_t sourceID) {
     capture->topAligned = source->topAligned;
     if (C3D_transferSurface(renderer, sourceID, renderer->hostCaptureSurfaceId))
         return renderer->hostCaptureSurfaceId;
+    if (!C3D_surfacePageIn(renderer, renderer->hostCaptureSurfaceId)) return -1;
 
     N3DSRenderStateSnapshot savedState;
     C3D_saveRenderState(renderer, &savedState);
@@ -4804,7 +5268,7 @@ static bool C3D_copySurfaceRect(Renderer* base, int32_t sourceID, int32_t destID
         return false;
     N3DSSurface* source = &renderer->surfaces[sourceID];
     N3DSSurface* dest = &renderer->surfaces[destID];
-    if (dest->target == NULL) {
+    if (dest->target == NULL && !C3D_surfacePageIn(renderer, destID)) {
         return false;
     }
     if (renderer->currentTargetSurfaceId == sourceID) {
@@ -4888,7 +5352,8 @@ static bool C3D_setTargetProjection(Renderer* base, int32_t surfaceID) {
     }
     if (!C3D_surfaceExists(base, surfaceID)) return false;
     surfaceID = targetSurfaceID;
-    if (surfaceID >= 0 && renderer->surfaces[surfaceID].target == NULL) return false;
+    if (surfaceID >= 0 && renderer->surfaces[surfaceID].target == NULL &&
+        !C3D_surfacePageIn(renderer, surfaceID)) return false;
     C3D_bindTarget(renderer, surfaceID, false);
     if (surfaceID >= 0) {
         N3DSSurface* surface = &renderer->surfaces[surfaceID];
@@ -4993,7 +5458,7 @@ static int32_t C3D_ensureAppSurface(
         logEvent("renderer",
             "app surface create failed logical=%ldx%ld linFree=%lu appFree=%lu vramFree=%lu",
             (long)width, (long)height, (unsigned long)n3ds_getFreeLinearBytes(),
-            (unsigned long)n3ds_getFreeHeapBudgetBytes(),
+            (unsigned long)n3ds_getFreeHeapBytes(),
             (unsigned long)vramSpaceFree());
     }
     return renderer->applicationSurfaceId;
@@ -5143,6 +5608,8 @@ static void C3D_surfaceResize(
         }
         return;
     }
+    // logEvent("vram", "resize id=%ld -> new=%ld data=%p", (long)surfaceID, (long)newId,
+        // renderer->surfaces[newId].tex.data);
     if (newId != surfaceID) {
         renderer->surfaces[surfaceID] = renderer->surfaces[newId];
         memset(&renderer->surfaces[newId], 0, sizeof(renderer->surfaces[newId]));
@@ -5186,6 +5653,45 @@ static void C3D_surfaceCopy(Renderer* base, int32_t destSurfaceID, int32_t destX
     C3D_restoreRenderState(renderer, &savedState, destSurfaceID);
 }
 
+static const uint8_t C3D_mortonLut[64] = {
+     0,  1,  4,  5, 16, 17, 20, 21,
+     2,  3,  6,  7, 18, 19, 22, 23,
+     8,  9, 12, 13, 24, 25, 28, 29,
+    10, 11, 14, 15, 26, 27, 30, 31,
+    32, 33, 36, 37, 48, 49, 52, 53,
+    34, 35, 38, 39, 50, 51, 54, 55,
+    40, 41, 44, 45, 56, 57, 60, 61,
+    42, 43, 46, 47, 58, 59, 62, 63};
+
+static void C3D_untileRGBA8(const uint32_t* src, uint32_t* dst, uint32_t width, uint32_t height) {
+    uint32_t tilesPerRow = width / 8u;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t tile = (y >> 3) * tilesPerRow + (x >> 3);
+            dst[y * width + x] = src[tile * 64u + C3D_mortonLut[((y & 7u) << 3) | (x & 7u)]];
+        }
+    }
+}
+
+static void C3D_untileRGBA4(const uint16_t* src, uint32_t* dst, uint32_t width, uint32_t height) {
+    uint32_t tilesPerRow = width / 8u;
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t tile = (y >> 3) * tilesPerRow + (x >> 3);
+            uint16_t v = src[tile * 64u + C3D_mortonLut[((y & 7u) << 3) | (x & 7u)]];
+            uint32_t r = (v >> 12) & 0xFu, g = (v >> 8) & 0xFu, b = (v >> 4) & 0xFu, a = v & 0xFu;
+            dst[y * width + x] = ((r * 17u) << 24) | ((g * 17u) << 16) | ((b * 17u) << 8) | (a * 17u);
+        }
+    }
+}
+
+static inline void C3D_copyPixelToRGBA(uint8_t* dst, const uint8_t* src) {
+    dst[0] = src[3];
+    dst[1] = src[2];
+    dst[2] = src[1];
+    dst[3] = src[0];
+}
+
 static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* outRGBA) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
@@ -5210,12 +5716,34 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
     uint16_t transferH = surface->target != NULL && surface->target->frameBuf.height > 0
         ? surface->target->frameBuf.height
         : surface->texHeight;
-    C3D_SyncDisplayTransfer((u32*)colorBuf, GX_BUFFER_DIM(transferW, transferH), (u32*)temp,
-        GX_BUFFER_DIM(surface->texWidth, surface->texHeight),
-        GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
-            GX_TRANSFER_IN_FORMAT(surface->transferFormat) |
-            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-            GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    bool softwareRead = (surface->transferFormat == GX_TRANSFER_FMT_RGBA8 || surface->transferFormat == GX_TRANSFER_FMT_RGBA4) &&
+        transferW == surface->texWidth && transferH == surface->texHeight &&
+        (surface->texWidth % 8u) == 0u && (surface->texHeight % 8u) == 0u;
+    if (softwareRead) {
+        bool openedFrame = false;
+        if (resumeFrame) {
+            C3D_resumeDrawFrame(renderer);
+        } else {
+            C3D_FrameBegin(0);
+            openedFrame = true;
+        }
+        if (surface->transferFormat == GX_TRANSFER_FMT_RGBA4) {
+            GSPGPU_InvalidateDataCache(colorBuf, (uint32_t)(bytes / 2u));
+            C3D_untileRGBA4((const uint16_t*)colorBuf, (uint32_t*)temp, surface->texWidth, surface->texHeight);
+        } else {
+            GSPGPU_InvalidateDataCache(colorBuf, (uint32_t)bytes);
+            C3D_untileRGBA8((const uint32_t*)colorBuf, (uint32_t*)temp, surface->texWidth, surface->texHeight);
+        }
+        if (openedFrame) C3D_FrameEnd(0);
+        resumeFrame = false;
+    } else {
+        C3D_SyncDisplayTransfer((u32*)colorBuf, GX_BUFFER_DIM(transferW, transferH), (u32*)temp,
+            GX_BUFFER_DIM(surface->texWidth, surface->texHeight),
+            GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
+                GX_TRANSFER_IN_FORMAT(surface->transferFormat) |
+                GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    }
     if (resumeFrame) C3D_resumeDrawFrame(renderer);
     size_t srcPitch = (size_t)surface->texWidth * 4u;
     int32_t srcYOffset = C3D_surfaceStorageYOffset(surface);
@@ -5235,14 +5763,16 @@ static bool C3D_surfaceGetPixels(Renderer* base, int32_t surfaceID, uint8_t* out
                 int32_t sx = (int32_t)((int64_t)x * (int64_t)surface->width / (int64_t)readW);
                 if (sx < 0) sx = 0;
                 if (sx >= surface->width) sx = surface->width - 1;
-                memcpy(outRGBA + (size_t)y * dstPitch + (size_t)x * 4u,
-                    temp + (size_t)(srcYOffset + sy) * srcPitch + (size_t)sx * 4u, 4u);
+                C3D_copyPixelToRGBA(outRGBA + (size_t)y * dstPitch + (size_t)x * 4u,
+                    temp + (size_t)(srcYOffset + sy) * srcPitch + (size_t)sx * 4u);
             }
         }
     } else {
         for (int32_t y = 0; y < readH; ++y) {
-            memcpy(outRGBA + (size_t)y * dstPitch, temp + (size_t)(srcYOffset + y) * srcPitch,
-                (size_t)readW * 4u);
+            const uint8_t* srcRow = temp + (size_t)(srcYOffset + y) * srcPitch;
+            uint8_t* dstRow = outRGBA + (size_t)y * dstPitch;
+            for (int32_t x = 0; x < readW; ++x)
+                C3D_copyPixelToRGBA(dstRow + (size_t)x * 4u, srcRow + (size_t)x * 4u);
         }
     }
     linearFree(temp);
@@ -5405,8 +5935,11 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     N3DSSurfaceSnapshotRect snapshot;
     bool useActiveProjection = appSurfaceSource && renderer->currentTargetSurfaceId == surfaceID;
     if (!C3D_getSnapshotRect(
-            renderer, source, useActiveProjection, x, y, requestedW, requestedH, &snapshot))
+            renderer, source, useActiveProjection, x, y, requestedW, requestedH, &snapshot)) {
+        // logEvent("sfs", "snapshot rect failed src=%ld req %ldx%ld", (long)surfaceID,
+            // (long)requestedW, (long)requestedH);
         return -1;
+    }
 
     int32_t targetPhysicalW =
         (int32_t)ceilf((float)snapshot.snapshotW * C3D_surfacePhysicalScaleX(source));
@@ -5418,6 +5951,9 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     privateSurfaceID = C3D_allocSpriteSurface(
         base, targetPhysicalW, targetPhysicalH, requestedW, requestedH);
     if (privateSurfaceID < 0) {
+        // logEvent("sfs", "sprite surface alloc failed src=%ld phys %ldx%ld req %ldx%ld vramFree=%lu linearFree=%lu",
+            // (long)surfaceID, (long)targetPhysicalW, (long)targetPhysicalH, (long)requestedW,
+            // (long)requestedH, (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
         return -1;
     }
     float dstX = (float)snapshot.destX * (float)requestedW / (float)snapshot.snapshotW;
@@ -5426,6 +5962,24 @@ static int32_t C3D_createSpriteFromSurface(Renderer* base, int32_t surfaceID, in
     float dstH = (float)snapshot.copyH * (float)requestedH / (float)snapshot.snapshotH;
     bool copied = C3D_copySurfaceRect(base, surfaceID, privateSurfaceID,
         snapshot.srcX, snapshot.srcY, snapshot.copyW, snapshot.copyH, dstX, dstY, dstW, dstH);
+    // {
+        // const N3DSSurface* logSrc = &renderer->surfaces[surfaceID];
+        // const N3DSSurface* logDst = &renderer->surfaces[privateSurfaceID];
+        // logEvent("sfs", "req %ld,%ld %ldx%ld src=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld data=%p",
+            // (long)x, (long)y, (long)requestedW, (long)requestedH, (long)surfaceID,
+            // (long)logSrc->width, (long)logSrc->height, (long)logSrc->texWidth, (long)logSrc->texHeight,
+            // (long)C3D_surfaceLogicalWidth(logSrc), (long)C3D_surfaceLogicalHeight(logSrc), logSrc->tex.data);
+        // logEvent("sfs", "snap src %ld,%ld copy %ldx%ld dest %ld,%ld snapsize %ldx%ld",
+            // (long)snapshot.srcX, (long)snapshot.srcY, (long)snapshot.copyW, (long)snapshot.copyH,
+            // (long)snapshot.destX, (long)snapshot.destY, (long)snapshot.snapshotW, (long)snapshot.snapshotH);
+        // logEvent("sfs", "priv=%ld phys %ldx%ld tex %ldx%ld logical %ldx%ld data=%p dst %.1f,%.1f %.1fx%.1f ok=%d",
+            // (long)privateSurfaceID, (long)logDst->width, (long)logDst->height,
+            // (long)logDst->texWidth, (long)logDst->texHeight,
+            // (long)C3D_surfaceLogicalWidth(logDst), (long)C3D_surfaceLogicalHeight(logDst), logDst->tex.data,
+            // dstX, dstY, dstW, dstH, (int)copied);
+        // logEvent("sfs", "mem vramFree=%lu linearFree=%lu",
+            // (unsigned long)vramSpaceFree(), (unsigned long)n3ds_getFreeLinearBytes());
+    // }
     if (!copied) {
         C3D_destroySurfaceSlot(renderer, privateSurfaceID);
         return -1;
@@ -5748,9 +6302,21 @@ static bool C3D_shadersSupported(void) {
     return false;
 }
 
+extern gxCmdQueue_s __C3D_Context;
+#define N3DS_GX_QUEUE_CLEAR_HEADROOM 8u
+
+static bool C3D_gxQueueAllowsClear(void) {
+    const gxCmdQueue_s* queue = &__C3D_Context;
+    uint32_t used = queue->numEntries;
+    uint32_t capacity = queue->maxEntries;
+    return capacity == 0u || used + N3DS_GX_QUEUE_CLEAR_HEADROOM <= capacity;
+}
+
 static void C3D_clearActive(Renderer* base, uint32_t color, float alpha) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
+    n3ds_c3dAcquireFrame(&renderer->drawContext);
+    if (!C3D_gxQueueAllowsClear()) return;
     C3D_safeFrameSplit(renderer);
     if (renderer->currentTargetSurfaceId >= 0 &&
         (uint32_t)renderer->currentTargetSurfaceId < renderer->surfaceCount &&
@@ -5790,6 +6356,7 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
     base->dataWin = dataWin;
+    gLinearReclaimRenderer = renderer;
     if (dataWin->shdr.count > 0) {
         renderer->premultiplyAlphaShaders = safeCalloc(dataWin->shdr.count, sizeof(bool));
         for (uint32_t i = 0; i < dataWin->shdr.count; ++i)
@@ -5852,6 +6419,7 @@ static void C3D_init(Renderer* base, DataWin* dataWin) {
 static void C3D_destroy(Renderer* base) {
     assert(base != NULL);
     N3DSRenderer* renderer = (N3DSRenderer*)base;
+    if (gLinearReclaimRenderer == renderer) gLinearReclaimRenderer = NULL;
     if (renderer->drawContextReady) n3ds_c3dFlush(&renderer->drawContext);
     for (uint32_t i = 0; i < renderer->surfaceCount; ++i) {
         if (!renderer->surfaces[i].used) continue;
@@ -6385,6 +6953,23 @@ void C3D_endDrawFrame(Renderer* renderer) {
     while (gspIsPresentPending(GFX_TOP) || gspIsPresentPending(GFX_BOTTOM))
         gspWaitForAnyEvent();
     n3ds_c3dEndFrame(&n3ds->drawContext);
+}
+
+void C3D_deferDrawFrame(Renderer* renderer) {
+    C3D_beginDrawFrame(renderer);
+    ((N3DSRenderer*)renderer)->drawContext.framePending = true;
+}
+
+void C3D_acquireDrawFrame(Renderer* renderer) {
+    n3ds_c3dAcquireFrame(&((N3DSRenderer*)renderer)->drawContext);
+}
+
+N3DSFrameGpuTimings C3D_getFrameGpuTimings(const Renderer* renderer) {
+    const N3DSRenderer* n3ds = (const N3DSRenderer*)renderer;
+    return (N3DSFrameGpuTimings){
+        .frameWaitTicks = n3ds->drawContext.frameWaitTicks,
+        .previousGpuMs = n3ds->drawContext.previousGpuMs,
+    };
 }
 
 N3DSC3DVertex* C3D_beginVertices(
