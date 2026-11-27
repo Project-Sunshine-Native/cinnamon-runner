@@ -121,6 +121,17 @@ void NativeDarkPonmanStep_register(VMContext* ctx);
 void NativeLightfairyDraw_register(VMContext* ctx);
 void NativeLightfairyStep_register(VMContext* ctx);
 void NativeScissordancerStep_register(VMContext* ctx);
+void NativeChapter3Lerpvar_register(VMContext* ctx);
+void NativeChapter3Afterimage_register(VMContext* ctx);
+void NativeChapter3AfterimageScreen_register(VMContext* ctx);
+void NativeChapter3AfterimageBlend_register(VMContext* ctx);
+void NativeChapter3DrawBeam_register(VMContext* ctx);
+void NativeChapter3RoaringStar_register(VMContext* ctx);
+void NativeChapter3Roaring2Draw_register(VMContext* ctx);
+void NativeChapter3TunnelSlasher_register(VMContext* ctx);
+void NativeChapter3SwordTunnelSword_register(VMContext* ctx);
+void NativeChapter3PointingStar_register(VMContext* ctx);
+void NativeChapter3ViewGet_register(VMContext* ctx);
 
 static void registerUndertale(VMContext* ctx) {
     GeneratedNativeScripts_registerAll(ctx);
@@ -255,5 +266,17 @@ void NativeScripts_registerAll(VMContext* ctx) {
 #endif
         NativeChapter2CyberBackgroundDraw_register(ctx);
         NativeChapter2ParallaxerLayerDraw_register(ctx);
+    } else if (strcmp(title, "DELTARUNE Chapter 3") == 0) {
+        NativeChapter3Lerpvar_register(ctx);
+        NativeChapter3Afterimage_register(ctx);
+        NativeChapter3AfterimageScreen_register(ctx);
+        NativeChapter3AfterimageBlend_register(ctx);
+        NativeChapter3DrawBeam_register(ctx);
+        NativeChapter3RoaringStar_register(ctx);
+        NativeChapter3Roaring2Draw_register(ctx);
+        NativeChapter3TunnelSlasher_register(ctx);
+        NativeChapter3SwordTunnelSword_register(ctx);
+        NativeChapter3PointingStar_register(ctx);
+        NativeChapter3ViewGet_register(ctx);
     }
 }

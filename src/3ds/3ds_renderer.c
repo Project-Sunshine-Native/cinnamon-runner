@@ -356,6 +356,12 @@ typedef struct {
     int32_t visibleTop, visibleBottom;
     int32_t opaqueTop, opaqueBottom;
 } N3DSSpriteRowCache;
+//girl who did not know that vertex functions didnt exist
+typedef struct {
+    float x, y;
+    uint32_t color;
+    float alpha;
+} N3DSPrimitiveVertex;
 
 typedef struct {
     Renderer base;
@@ -418,6 +424,8 @@ typedef struct {
     bool screenTransformActive;
     bool hostViewProjectionActive;
     N3DSRenderStateSnapshot* targetStack;
+    N3DSPrimitiveVertex* primitiveVertices;
+    int32_t primitiveType;
 } N3DSRenderer;
 
 static int32_t C3D_primaryWidth(const N3DSRenderer* renderer) {
@@ -4111,6 +4119,89 @@ static void C3D_drawLine(Renderer* base, float x1, float y1, float x2, float y2,
     C3D_drawLineColor(base, x1, y1, x2, y2, width, color, color, alpha);
 }
 
+static void C3D_primitiveBegin(Renderer* base, int32_t primitiveType) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    renderer->primitiveType = primitiveType;
+    arrsetlen(renderer->primitiveVertices, 0);
+}
+
+static void C3D_primitiveBeginTexture(Renderer* base, int32_t primitiveType, MAYBE_UNUSED int32_t texture) {
+    C3D_primitiveBegin(base, primitiveType);
+}
+
+static void C3D_drawVertex(Renderer* base, float x, float y, MAYBE_UNUSED float z, uint32_t color,
+    float alpha, MAYBE_UNUSED float u, MAYBE_UNUSED float v) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    if (renderer->primitiveType == PRIMITIVE_NONE) return;
+    N3DSPrimitiveVertex vertex = {x, y, color, alpha};
+    arrput(renderer->primitiveVertices, vertex);
+}
+
+static void C3D_primitiveTriangle(N3DSRenderer* renderer, const N3DSPrimitiveVertex* a,
+    const N3DSPrimitiveVertex* b, const N3DSPrimitiveVertex* c) {
+    float x1 = a->x, y1 = a->y, x2 = b->x, y2 = b->y, x3 = c->x, y3 = c->y;
+    C3D_transformPoint(renderer, &x1, &y1);
+    C3D_transformPoint(renderer, &x2, &y2);
+    C3D_transformPoint(renderer, &x3, &y3);
+    const N3DSVertex vertices[3] = {
+        {{x1, y1}, {0.0f, 1.0f}},
+        {{x2, y2}, {1.0f, 1.0f}},
+        {{x3, y3}, {0.0f, 0.0f}},
+    };
+    const uint32_t colors[3] = {
+        C3D_makeColor(a->color, a->alpha),
+        C3D_makeColor(b->color, b->alpha),
+        C3D_makeColor(c->color, c->alpha),
+    };
+    n3ds_c3dTriangle(&renderer->drawContext, &renderer->drawContext.whiteTex, vertices, colors);
+}
+
+static void C3D_primitiveLine(Renderer* base, const N3DSPrimitiveVertex* a, const N3DSPrimitiveVertex* b) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    bool hostProjection = renderer->hostViewProjectionActive;
+    bool renderSpace = renderer->screenTransformActive || hostProjection;
+    float minimumWidth = C3D_minimumLineWidth(renderer, renderSpace);
+    C3D_drawPreparedLine(base, a->x, a->y, b->x, b->y, minimumWidth, a->color, a->alpha,
+        C3D_makeColor(a->color, a->alpha), C3D_makeColor(b->color, b->alpha),
+        minimumWidth, hostProjection, renderSpace);
+}
+
+static void C3D_primitiveEnd(Renderer* base) {
+    assert(base != NULL);
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSPrimitiveVertex* v = renderer->primitiveVertices;
+    int32_t count = (int32_t)arrlen(renderer->primitiveVertices);
+    switch (renderer->primitiveType) {
+        case PRIMITIVE_POINTS:
+            for (int32_t i = 0; i < count; i++)
+                base->vtable->drawRectangle(base, v[i].x, v[i].y, v[i].x + 1.0f, v[i].y + 1.0f,
+                    v[i].color, v[i].alpha, false);
+            break;
+        case PRIMITIVE_LINES:
+            for (int32_t i = 0; i + 1 < count; i += 2) C3D_primitiveLine(base, &v[i], &v[i + 1]);
+            break;
+        case PRIMITIVE_LINE_STRIP:
+            for (int32_t i = 0; i + 1 < count; i++) C3D_primitiveLine(base, &v[i], &v[i + 1]);
+            break;
+        case PRIMITIVE_TRIANGLES:
+            for (int32_t i = 0; i + 2 < count; i += 3) C3D_primitiveTriangle(renderer, &v[i], &v[i + 1], &v[i + 2]);
+            break;
+        case PRIMITIVE_TRIANGLE_STRIP:
+            for (int32_t i = 0; i + 2 < count; i++)
+                C3D_primitiveTriangle(renderer, &v[i + (i & 1)], &v[i + 1 - (i & 1)], &v[i + 2]);
+            break;
+        case PRIMITIVE_TRIANGLE_FAN:
+            for (int32_t i = 1; i + 1 < count; i++) C3D_primitiveTriangle(renderer, &v[0], &v[i], &v[i + 1]);
+            break;
+        default:
+            break;
+    }
+    arrsetlen(renderer->primitiveVertices, 0);
+    renderer->primitiveType = PRIMITIVE_NONE;
+}
+
 static bool C3D_resolveFontState(
     N3DSRenderer* renderer, DataWin* dataWin, Font* font, N3DSFontState* state) {
     if (dataWin == NULL || font == NULL || state == NULL) return false;
@@ -6433,6 +6524,7 @@ static void C3D_destroy(Renderer* base) {
     arrfree(renderer->freeSurfaceSpriteSurfaces);
     arrfree(renderer->pendingSurfaceFrees);
     arrfree(renderer->targetStack);
+    arrfree(renderer->primitiveVertices);
     free(renderer->roomTileRanges);
     hmfree(renderer->roomTileLookup);
     C3D_destroyTpagBindings(renderer);
@@ -6832,6 +6924,10 @@ static RendererVtable gN3DSRendererVtable = {
     .drawRectangleColor = C3D_drawRectangleColor,
     .drawLine = C3D_drawLine,
     .drawTriangle = C3D_drawTriangle,
+    .primitiveBegin = C3D_primitiveBegin,
+    .primitiveBeginTexture = C3D_primitiveBeginTexture,
+    .primitiveEnd = C3D_primitiveEnd,
+    .drawVertex = C3D_drawVertex,
     .drawLineColor = C3D_drawLineColor,
     .drawText = C3D_drawText,
     .drawGlyph = C3D_drawGlyphFast,
