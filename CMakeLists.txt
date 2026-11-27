@@ -1392,7 +1392,9 @@ elseif(PLATFORM STREQUAL "3ds")
     endif()
 
     set(N3DS_MENU_T3X_OUTPUTS)
-    foreach(N3DS_MENU_TEXTURE font door soul intro_logo intro_heart intro_depth intro_noise 270767334)
+    foreach(N3DS_MENU_TEXTURE font door soul intro_logo intro_heart intro_depth intro_noise 270767334
+        device_postgame_background device_postgame_animation_0 device_postgame_animation_1
+        device_postgame_animation_2 device_postgame_animation_3 device_postgame_animation_4)
         set(N3DS_MENU_SOURCE ${N3DS_ROMFS_SOURCE_DIR}/launcher/${N3DS_MENU_TEXTURE}.png)
         if(EXISTS ${N3DS_MENU_SOURCE})
             if(NOT CTR_TEX3DS)

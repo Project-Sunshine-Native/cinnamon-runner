@@ -53,6 +53,8 @@ typedef struct {
     C2D_SpriteSheet font;
     C2D_SpriteSheet door;
     C2D_SpriteSheet soul;
+    C2D_SpriteSheet postgameBackground;
+    C2D_SpriteSheet postgameAnimation[5];
     C2D_SpriteSheet defaultIcon;
     N3DSMenuGlyph glyphs[128];
     N3DSFileSystem* fileSystem;
@@ -62,6 +64,7 @@ typedef struct {
     int32_t musicInstance;
     N3DSLauncherSettings launcher;
     N3DSLauncherUI uiStyle;
+    bool postgame;
     N3DSRunnerSettings defaults;
     N3DSRunnerSettings edit;
     N3DSMenuGame* editingGame;
@@ -245,11 +248,27 @@ static void n3ds_menuDrawText(N3DSMenu* menu, N3DSLoadingScreen* screen, const c
         scale *= menu->uiStyle == N3DS_LAUNCHER_BASIC ? 0.55f : 0.6f;
         C2D_TextGetDimensions(&parsed, scale, scale, &width, NULL);
         float scaleX = width > maxWidth ? scale * maxWidth / width : scale;
+        if (menu->uiStyle == N3DS_LAUNCHER_STORY) {
+            uint32_t shadow = color & 0xff000000u;
+            C2D_DrawText(&parsed, C2D_WithColor, x + 1, y + 1, 0.1f,
+                scaleX, scale, shadow);
+        }
         C2D_DrawText(&parsed, C2D_WithColor, x, y, 0.1f, scaleX, scale, color);
         return;
     }
     float scaleX = width > maxWidth ? scale * maxWidth / width : scale;
     C2D_ImageTint tint;
+    if (menu->uiStyle == N3DS_LAUNCHER_STORY) {
+        C2D_PlainImageTint(&tint, color & 0xff000000u, 1.0f);
+        float shadowX = x;
+        for (const unsigned char* c = (const unsigned char*)text; *c != 0; ++c) {
+            N3DSMenuGlyph* glyph = &menu->glyphs[*c];
+            if (glyph->image.tex != NULL)
+                C2D_DrawImageAt(glyph->image, shadowX + glyph->offset * scaleX + 1,
+                    y + 1, 0.1f, &tint, scaleX, scale);
+            shadowX += glyph->advance * scaleX;
+        }
+    }
     C2D_PlainImageTint(&tint, color, 1.0f);
     for (const unsigned char* c = (const unsigned char*)text; *c != 0; ++c) {
         N3DSMenuGlyph* glyph = &menu->glyphs[*c];
@@ -338,6 +357,19 @@ static void n3ds_menuApplyVolumes(N3DSMenu* menu) {
     }
 }
 
+static void n3ds_menuSetMusic(N3DSMenu* menu) {
+    if (menu->sounds[0] >= 0)
+        menu->audio->vtable->destroyStream(menu->audio, menu->sounds[0]);
+    menu->sounds[0] = -1;
+    menu->musicInstance = -1;
+    if (menu->uiStyle == N3DS_LAUNCHER_BASIC) return;
+    const char* file = menu->postgame ? "device_postgame.ogg"
+        : menu->uiStyle == N3DS_LAUNCHER_DEVICE ? "device.ogg" : "menu.ogg";
+    menu->sounds[0] = menu->audio->vtable->createStream(menu->audio, file);
+    n3ds_menuApplyVolumes(menu);
+    n3ds_menuPlaySound(menu, 0);
+}
+
 static void n3ds_menuInitAudio(N3DSMenu* menu) {
     menu->fileSystem = n3ds_fsCreate(N3DS_MENU_ROOT, N3DS_MENU_ROOT);
     menu->audio = (AudioSystem*)n3ds_audioCreate();
@@ -372,8 +404,84 @@ static void n3ds_menuFree(N3DSMenu* menu) {
     if (menu->font != NULL) C2D_SpriteSheetFree(menu->font);
     if (menu->door != NULL) C2D_SpriteSheetFree(menu->door);
     if (menu->soul != NULL) C2D_SpriteSheetFree(menu->soul);
+    if (menu->postgameBackground != NULL) C2D_SpriteSheetFree(menu->postgameBackground);
+    for (int i = 0; i < 5; ++i)
+        if (menu->postgameAnimation[i] != NULL) C2D_SpriteSheetFree(menu->postgameAnimation[i]);
     if (menu->defaultIcon != NULL) C2D_SpriteSheetFree(menu->defaultIcon);
     if (menu->target != NULL) C3D_RenderTargetDelete(menu->target);
+}
+
+static bool n3ds_menuLoadPostgameAssets(N3DSMenu* menu) {
+    if (menu->postgameBackground != NULL) return true;
+    static const char* const animationFiles[] = {
+        "device_postgame_animation_0.t3x", "device_postgame_animation_1.t3x",
+        "device_postgame_animation_2.t3x", "device_postgame_animation_3.t3x",
+        "device_postgame_animation_4.t3x",
+    };
+    char path[64];
+    menu->postgameBackground = C2D_SpriteSheetLoad(
+        N3DS_MENU_ROOT "device_postgame_background.t3x");
+    for (int i = 0; i < 5; ++i) {
+        snprintf(path, sizeof(path), "%s%s", N3DS_MENU_ROOT, animationFiles[i]);
+        menu->postgameAnimation[i] = C2D_SpriteSheetLoad(path);
+    }
+    if (menu->postgameBackground == NULL) goto failed;
+    for (int i = 0; i < 5; ++i) {
+        if (menu->postgameAnimation[i] == NULL) goto failed;
+        C3D_TexSetFilter(C2D_SpriteSheetGetImage(menu->postgameAnimation[i], 0).tex,
+            GPU_LINEAR, GPU_LINEAR);
+    }
+    C3D_TexSetFilter(C2D_SpriteSheetGetImage(menu->postgameBackground, 0).tex,
+        GPU_LINEAR, GPU_LINEAR);
+    return true;
+
+failed:
+    if (menu->postgameBackground != NULL) {
+        C2D_SpriteSheetFree(menu->postgameBackground);
+        menu->postgameBackground = NULL;
+    }
+    for (int i = 0; i < 5; ++i) {
+        if (menu->postgameAnimation[i] == NULL) continue;
+        C2D_SpriteSheetFree(menu->postgameAnimation[i]);
+        menu->postgameAnimation[i] = NULL;
+    }
+    return false;
+}
+
+static void n3ds_menuDrawPostgameBackground(N3DSMenu* menu, float phase) {
+    C2D_Image background = C2D_SpriteSheetGetImage(menu->postgameBackground, 0);
+    Tex3DS_SubTexture row = *background.subtex;
+    float texelHeight = (background.subtex->bottom - background.subtex->top) /
+        background.subtex->height;
+    float alpha = fminf(0.5f, 0.56f * (1.0f - powf(13.0f / 14.0f, phase)));
+    C2D_ImageTint backgroundTint;
+    C2D_AlphaImageTint(&backgroundTint, alpha * 0.8f);
+    row.height = 1;
+
+    for (int y = 0; y < 190; ++y) {
+        float magnitude = 6.0f * (y / 240.0f) * 1.3f;
+        if (magnitude > 6.0f) magnitude = 0;
+        else magnitude = 6.0f - magnitude;
+        float offset = sinf((y / 8.0f) + (phase / 30.0f)) * magnitude;
+        row.top = background.subtex->top + y * texelHeight;
+        row.bottom = row.top + texelHeight;
+        C2D_Image slice = {background.tex, &row};
+        float drawY = -10 + y - alpha * 20;
+        C2D_DrawImageAt(slice, offset, drawY, 0.9f, &backgroundTint, 1, 1);
+        C2D_DrawImageAt(slice, -offset, drawY, 0.9f, &backgroundTint, 1, 1);
+    }
+
+    static const float frameOffsets[] = {0, 0.4f, 0.8f};
+    static const float frameAlphas[] = {0.46f, 0.56f, 0.7f};
+    float animationFrame = phase / 12.0f;
+    float animationY = 180 - alpha * 20;
+    for (int i = 0; i < 3; ++i) {
+        int frame = (int)(animationFrame + frameOffsets[i]) % 5;
+        C2D_Image image = C2D_SpriteSheetGetImage(menu->postgameAnimation[frame], 0);
+        C2D_ImageTint tint;
+        C2D_AlphaImageTint(&tint, alpha * frameAlphas[i]);
+        C2D_DrawImageAt(image, 0, animationY, 0.9f, &tint, 1, 1);
+    }
 }
 
 static void n3ds_menuDrawBackground(N3DSMenu* menu, N3DSLoadingScreen* screen, float phase) {
@@ -389,12 +497,21 @@ static void n3ds_menuDrawBackground(N3DSMenu* menu, N3DSLoadingScreen* screen, f
         C2D_DrawImageAt(door, -23, 52, 0.9f, &tint, 2, 2);
         C2D_AlphaImageTint(&tint, 0.25f);
         C2D_DrawImageAt(door, -25, 50, 0.9f, &tint, 2, 2);
+    } else if (menu->postgame) {
+        n3ds_menuDrawPostgameBackground(menu, phase);
     }
     C2D_TextBufClear(screen->textBuffer);
 }
 
-static void n3ds_menuDrawBox(float y, uint32_t color) {
+static void n3ds_menuDrawBox(float y, uint32_t color, N3DSLauncherUI uiStyle) {
     C2D_DrawRectSolid(55, y, 0.8f, 210, 40, C2D_Color32(0, 0, 0, 128));
+    if (uiStyle == N3DS_LAUNCHER_DEVICE) {
+        C2D_DrawRectSolid(54, y - 1, 0.5f, 212, 1, color);
+        C2D_DrawRectSolid(54, y + 39, 0.5f, 212, 1, color);
+        C2D_DrawRectSolid(54, y - 1, 0.5f, 1, 41, color);
+        C2D_DrawRectSolid(265, y - 1, 0.5f, 1, 41, color);
+        return;
+    }
     C2D_DrawRectSolid(53, y - 2, 0.5f, 214, 2, color);
     C2D_DrawRectSolid(53, y + 39, 0.5f, 214, 2, color);
     C2D_DrawRectSolid(53, y - 2, 0.5f, 2, 43, color);
@@ -543,14 +660,17 @@ static bool n3ds_menuLeaveSettings(N3DSMenu* menu, bool save) {
     if (menu->page == N3DS_MENU_LAUNCHER_OPTIONS) {
         if (save) saved = n3ds_settingsSave(N3DS_SETTINGS_PATH, NULL, NULL, &menu->launcher);
         else n3ds_settingsLoad(N3DS_SETTINGS_PATH, NULL, &menu->launcher);
-        n3ds_menuApplyVolumes(menu);
         if (saved && menu->uiStyle != (N3DSLauncherUI)menu->launcher.uiStyle) {
             menu->uiStyle = (N3DSLauncherUI)menu->launcher.uiStyle;
-            if (menu->uiStyle == N3DS_LAUNCHER_BASIC) {
-                menu->audio->vtable->stopAll(menu->audio);
-                menu->musicInstance = -1;
-            } else n3ds_menuPlaySound(menu, 0);
-        }
+            menu->postgame = menu->uiStyle == N3DS_LAUNCHER_STORY;
+            if (menu->postgame && !n3ds_menuLoadPostgameAssets(menu)) {
+                menu->postgame = false;
+                logWarn("Could not load STORY launcher fountain sprites\n");
+            }
+            menu->audio->vtable->stopAll(menu->audio);
+            menu->musicInstance = -1;
+            n3ds_menuSetMusic(menu);
+        } else n3ds_menuApplyVolumes(menu);
     }
     if (!saved) {
         snprintf(menu->settingsMessage, sizeof(menu->settingsMessage), "%s", n3ds_settingsError());
@@ -874,17 +994,23 @@ static void n3ds_menuDrawSettings(N3DSMenu* menu, N3DSLoadingScreen* screen,
     const N3DSMenuGame* game, float phase) {
     n3ds_menuDrawBackground(menu, screen, phase);
     bool basic = menu->uiStyle == N3DS_LAUNCHER_BASIC;
+    bool device = menu->uiStyle == N3DS_LAUNCHER_DEVICE;
     int visible = n3ds_menuVisibleRows(menu);
     uint32_t white = C2D_Color32(255, 255, 255, 255);
-    uint32_t dim = basic ? C2D_Color32(170, 170, 170, 255) : C2D_Color32(179, 153, 153, 255);
-    uint32_t selectedColor = basic ? C2D_Color32(82, 165, 232, 255) : white;
+    uint32_t green = C2D_Color32(0, 128, 0, 255);
+    uint32_t dim = basic ? C2D_Color32(170, 170, 170, 255)
+        : device ? green : C2D_Color32(179, 153, 153, 255);
+    uint32_t selectedColor = basic ? C2D_Color32(82, 165, 232, 255)
+        : device ? C2D_Color32(0, 255, 0, 255) : white;
     const char* title = "Settings";
     if (menu->page == N3DS_MENU_GAME_OPTIONS) title = menu->editingGame == NULL ? "Game defaults" : "Game settings";
     if (menu->page == N3DS_MENU_DEV_OPTIONS) title = "Dev";
     if (menu->page == N3DS_MENU_KEYS) title = "Button mapping";
     if (menu->page == N3DS_MENU_LAUNCHER_OPTIONS) title = "Launcher settings";
-    n3ds_menuDrawText(menu, screen, "Cinnamon", 8, 4, basic ? 1.4f : 1, 304, selectedColor);
-    n3ds_menuDrawText(menu, screen, title, basic ? 24 : 40, basic ? 36 : 30, 1, 270, white);
+    n3ds_menuDrawText(menu, screen, device ? "CINNAMON" : "Cinnamon",
+        8, 4, basic ? 1.4f : 1, 304, selectedColor);
+    n3ds_menuDrawText(menu, screen, title, basic ? 24 : 40, basic ? 36 : 30, 1, 270,
+        device ? green : white);
     int count = n3ds_menuOptionCount(menu);
     char value[256];
     if (basic) {
@@ -907,7 +1033,7 @@ static void n3ds_menuDrawSettings(N3DSMenu* menu, N3DSLoadingScreen* screen,
             continue;
         }
         float y = 55 + row * N3DS_MENU_ROW_HEIGHT;
-        n3ds_menuDrawBox(y, color);
+        n3ds_menuDrawBox(y, color, menu->uiStyle);
         n3ds_menuDrawText(menu, screen, label, 80, y + 5, 1, 180, color);
         n3ds_menuDrawText(menu, screen, value, 80, y + 22, 0.85f, 180, color);
     }
@@ -931,12 +1057,14 @@ static void n3ds_menuDrawCredits(N3DSMenu* menu, N3DSLoadingScreen* screen) {
         "Cinnamon Launcher v1.06",
         "by Project Sunshine/grayforz24682, casrielasriel, misdaze",
     };
+    uint32_t color = menu->uiStyle == N3DS_LAUNCHER_DEVICE
+        ? C2D_Color32(0, 128, 0, 153) : C2D_Color32(255, 255, 255, 153);
     n3ds_menuSetFontFiltering(menu, true);
     for (int i = 0; i < 2; ++i) {
         float width = n3ds_menuTextWidth(menu, screen, credits[i], 0.6f);
         if (width < 0) continue;
         n3ds_menuDrawText(menu, screen, credits[i], 312 - fminf(width, 304),
-            215 + i * 11, 0.6f, 304, C2D_Color32(255, 255, 255, 153));
+            215 + i * 11, 0.6f, 304, color);
     }
     n3ds_menuSetFontFiltering(menu, false);
 }
@@ -971,6 +1099,10 @@ static void n3ds_menuDrawScrollingText(N3DSMenu* menu, N3DSLoadingScreen* screen
     C2D_Flush();
     C3D_SetScissor(GPU_SCISSOR_NORMAL, (u32)(240 - y - ceilf(17 * scale)),
         (u32)(screenWidth - x - maxWidth), (u32)(240 - y), (u32)(screenWidth - x));
+    if (systemFont && menu->uiStyle == N3DS_LAUNCHER_STORY) {
+        C2D_DrawText(&parsed, C2D_WithColor, drawX + 1, y + 1, 0.1f,
+            fontScale, fontScale, color & 0xff000000u);
+    }
     if (systemFont)
         C2D_DrawText(&parsed, C2D_WithColor, drawX, y, 0.1f, fontScale, fontScale, color);
     else n3ds_menuDrawText(menu, screen, text, drawX, y, scale, fmaxf(width, 1), color);
@@ -1091,24 +1223,28 @@ static void n3ds_menuDraw(N3DSMenu* menu, N3DSLoadingScreen* screen,
         return;
     }
     n3ds_menuDrawBackground(menu, screen, phase);
+    bool device = menu->uiStyle == N3DS_LAUNCHER_DEVICE;
     uint32_t white = C2D_Color32(255, 255, 255, 255);
-    uint32_t dim = C2D_Color32(179, 153, 153, 255);
-    n3ds_menuDrawText(menu, screen, "Cinnamon", 8, 4, 1, 304, white);
-    n3ds_menuDrawText(menu, screen, "Please select a game.", 40, 30, 1, 270, white);
+    uint32_t green = C2D_Color32(0, 128, 0, 255);
+    uint32_t dim = device ? green : C2D_Color32(179, 153, 153, 255);
+    uint32_t selectedColor = device ? C2D_Color32(0, 255, 0, 255) : white;
+    n3ds_menuDrawText(menu, screen, device ? "CINNAMON" : "Cinnamon", 8, 4, 1, 304, selectedColor);
+    n3ds_menuDrawText(menu, screen, device ? "SELECT A GAME." : "Please select a game.", 40, 30, 1, 270,
+        device ? green : white);
 
     for (int row = 0; row < N3DS_MENU_VISIBLE_GAMES && first + row < gameCount; ++row) {
         int index = first + row;
         float y = 55 + row * N3DS_MENU_ROW_HEIGHT;
-        uint32_t color = index == selected && footerChoice < 0 ? white : dim;
-        n3ds_menuDrawBox(y, color);
+        uint32_t color = index == selected && footerChoice < 0 ? selectedColor : dim;
+        n3ds_menuDrawBox(y, color, menu->uiStyle);
         n3ds_menuDrawScrollingText(menu, screen, games[index].name, 80, y + 5, 1, 102, 320, false,
             index == selected && footerChoice < 0 ? menu->infoTime : 0, color);
         n3ds_menuDrawPlaytime(menu, screen, games[index].playtimeSeconds, 260, y + 5, color);
         if (index == selected && confirmChoice >= 0) {
             n3ds_menuDrawText(menu, screen, "Continue", 90, y + 22, 1, 80,
-                confirmChoice == 0 ? white : dim);
+                confirmChoice == 0 ? selectedColor : dim);
             n3ds_menuDrawText(menu, screen, "Back", 180, y + 22, 1, 80,
-                confirmChoice == 1 ? white : dim);
+                confirmChoice == 1 ? selectedColor : dim);
         } else if (menu->launcher.showPaths) {
             const char* folder = games[index].folder;
             if (strncmp(folder, "sdmc:/", 6) == 0) folder += 6;
@@ -1126,9 +1262,9 @@ static void n3ds_menuDraw(N3DSMenu* menu, N3DSLoadingScreen* screen,
     snprintf(position, sizeof(position), "%d/%d", selected + 1, gameCount);
     n3ds_menuDrawText(menu, screen, position, 278, 193, 0.6f, 34, dim);
     n3ds_menuDrawText(menu, screen, confirmChoice >= 0 ? "A: confirm" : "Settings",
-        55, 193, 1, 110, footerChoice == 0 ? white : dim);
+        55, 193, 1, 110, footerChoice == 0 ? selectedColor : dim);
     n3ds_menuDrawText(menu, screen, confirmChoice >= 0 ? "B: back" : "Exit",
-        185, 193, 1, 80, footerChoice == 1 ? white : dim);
+        185, 193, 1, 80, footerChoice == 1 ? selectedColor : dim);
 
     n3ds_menuDrawCredits(menu, screen);
 }
@@ -1138,7 +1274,9 @@ static void n3ds_menuDrawInfo(N3DSMenu* menu, const N3DSMenuGame* game) {
     C2D_TextBufClear(screen.textBuffer);
     uint32_t dim = C2D_Color32(170, 170, 170, 255);
     uint32_t accent = menu->uiStyle == N3DS_LAUNCHER_BASIC
-        ? C2D_Color32(82, 165, 232, 255) : C2D_Color32(255, 230, 150, 255);
+        ? C2D_Color32(82, 165, 232, 255)
+        : menu->uiStyle == N3DS_LAUNCHER_DEVICE ? C2D_Color32(0, 255, 0, 255)
+        : C2D_Color32(255, 230, 150, 255);
     C2D_Image image = {0};
     N3DSMenuIcon* icon = &menu->icons[game->pathIndex];
     if (icon->loaded) image = (C2D_Image){&icon->texture, &icon->subtex};
@@ -1203,6 +1341,12 @@ int n3ds_loadSelectGame(N3DSLoadingScreen* screen, char* const* gamePaths, int g
     menu.gameCount = gameCount;
     n3ds_settingsLoad(N3DS_SETTINGS_PATH, NULL, &menu.launcher);
     menu.uiStyle = (N3DSLauncherUI)menu.launcher.uiStyle;
+    menu.postgame = menu.uiStyle == N3DS_LAUNCHER_STORY;
+    if (menu.postgame && !n3ds_menuLoadPostgameAssets(&menu)) {
+        n3ds_loadWaitForStart(screen, "Missing postgame fountain sprites. Press START.");
+        n3ds_menuFree(&menu);
+        return -1;
+    }
     for (int i = 0; i < gameCount; ++i) {
         games[i].path = gamePaths[i];
         games[i].pathIndex = i;
@@ -1214,9 +1358,7 @@ int n3ds_loadSelectGame(N3DSLoadingScreen* screen, char* const* gamePaths, int g
         return -1;
     }
     n3ds_menuSortGames(&menu, games, gameCount);
-    menu.sounds[0] = menu.audio->vtable->createStream(menu.audio, "menu.ogg");
-    n3ds_menuApplyVolumes(&menu);
-    n3ds_menuPlaySound(&menu, 0);
+    n3ds_menuSetMusic(&menu);
     int selected = 0;
     if (menu.launcher.rememberSelection && menu.launcher.recentCount > 0) {
         for (int i = 0; i < gameCount; ++i)
@@ -1366,7 +1508,7 @@ int n3ds_loadSelectGame(N3DSLoadingScreen* screen, char* const* gamePaths, int g
                             footerChoice = -1;
                             selected = index;
                             activate = true;
-                        } else if (menu.uiStyle == N3DS_LAUNCHER_DELTARUNE && index == selected &&
+                        } else if (menu.uiStyle != N3DS_LAUNCHER_BASIC && index == selected &&
                             touchStartY >= 75 + row * rowHeight) {
                             if (touchStartX >= 80 && touchStartX < 170) {
                                 confirmChoice = 0;

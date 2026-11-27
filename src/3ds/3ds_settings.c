@@ -45,7 +45,7 @@ static const char* const filtering[] = {"Current", "Off"};
 static const char* const screens[] = {"Top", "Bottom"};
 static const char* const resolution[] = {"Normal", "Half"};
 static const char* const sorting[] = {"Alphabetical", "Recent"};
-static const char* const launcherUIs[] = {"DELTARUNE", "Basic"};
+static const char* const launcherUIs[] = {"DELTARUNE", "Basic", "DEVICE", "STORY"};
 
 const N3DSSetting N3DS_GAME_SETTINGS[] = {
     {"scaling", "Scaling",
@@ -78,7 +78,7 @@ const N3DSSetting N3DS_GAME_SETTINGS[] = {
 
 const N3DSSetting N3DS_LAUNCHER_SETTINGS[] = {
     {"uiStyle", "Launcher UI",
-        offsetof(N3DSLauncherSettings, uiStyle), N3DS_LAUNCHER_DELTARUNE, N3DS_LAUNCHER_BASIC, 1, launcherUIs},
+        offsetof(N3DSLauncherSettings, uiStyle), N3DS_LAUNCHER_DELTARUNE, N3DS_LAUNCHER_STORY, 1, launcherUIs},
     {"musicVolume", "Music volume",
         offsetof(N3DSLauncherSettings, musicVolume), 0, 100, 10, NULL},
     {"soundVolume", "Sound volume",

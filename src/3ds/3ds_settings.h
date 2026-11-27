@@ -18,6 +18,8 @@ typedef enum {
 typedef enum {
     N3DS_LAUNCHER_DELTARUNE,
     N3DS_LAUNCHER_BASIC,
+    N3DS_LAUNCHER_DEVICE,
+    N3DS_LAUNCHER_STORY,
 } N3DSLauncherUI;
 
 typedef struct {
