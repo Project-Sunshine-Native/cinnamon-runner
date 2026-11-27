@@ -109,6 +109,9 @@ void Instance_free(Instance* instance);
 void Instance_structIncRef(Instance* inst);
 void Instance_structDecRef(Instance* inst);
 
+extern bool gTrackReleasedStructs;
+extern int32_t* gReleasedStructIds;
+
 // Deep-copy all mutable fields from source to dst: built-in properties, alarms, selfVars.
 // Does NOT copy instanceId, objectIndex, destroyed, or createEventFired. Strings are duplicated so ownership stays independent. Arrays bump refCount (shared - CoW handles forking on first write).
 void Instance_copyFields(Instance* source, Instance* dst);
