@@ -8,6 +8,7 @@
 
 #ifdef PLATFORM_3DS
 #include "3ds/3ds_renderer.h"
+#include "stb_ds.h"
 #endif
 
 #include <math.h>
@@ -23,7 +24,64 @@ static struct {
     float shadeAlpha[18];
     float circleX[65], circleY[65];
     int32_t circleSegments;
+#ifdef PLATFORM_3DS
+    int32_t layerObject;
+#endif
 } cache;
+
+#ifdef PLATFORM_3DS
+static float parallaxCoverY(VMContext* ctx, Instance* self, const float* view, bool includeSelf) {
+    Runner* runner = ctx->runner;
+    Renderer* renderer = runner->renderer;
+    if (view == nullptr || cache.layerObject < 0 || renderer->CPortH <= 0 ||
+        Runner_surfaceGetTarget(runner) != runner->applicationSurfaceId)
+        return INFINITY;
+    RuntimeLayer* ownLayer = Runner_findRuntimeLayerById(runner, self->layer);
+    if (ownLayer == nullptr || !ownLayer->automaticDepth) return INFINITY;
+
+    int32_t camera[4];
+    C3D_getViewRect(renderer, camera);
+    float margin = fmaxf(1, (float)camera[3] / renderer->CPortH) + 1;
+    float width = (float)runner->currentRoom->width;
+    float height = (float)runner->currentRoom->height;
+    float cover = view[3];
+    Instance** layers = runner->instancesByObject[cache.layerObject];
+    for (size_t i = 0; i < arrlenu(layers); ++i) {
+        Instance* layer = layers[i];
+        if (!layer->active || !layer->visible || layer->destroyed || layer->sequenceControlled ||
+            layer->objectIndex != cache.layerObject ||
+            (layer == self ? !includeSelf : layer->depth >= self->depth) ||
+            RValue_toInt32(Instance_getSelfVar(layer, cache.shadoweffect)) != 1)
+            continue;
+        int32_t sprite = layer->spriteIndex;
+        if (sprite != cache.buildings && sprite != cache.ground) continue;
+        RuntimeLayer* drawLayer = Runner_findRuntimeLayerById(runner, layer->layer);
+        if (drawLayer == nullptr || !drawLayer->visible || !drawLayer->automaticDepth ||
+            drawLayer->shaderIndex != -1 || drawLayer->beginScript >= 0 || drawLayer->endScript >= 0)
+            continue;
+
+        int32_t tpag = Renderer_resolveTPAGIndex(ctx->dataWin, sprite, 0);
+        float top, bottom;
+        if (!C3D_getSpriteOpaqueRows(renderer, tpag, &top, &bottom)) continue;
+        if (sprite == cache.buildings && view[0] >= -100 && view[2] <= width + 100 &&
+            height + 2 >= cover) {
+            GMLReal init = RValue_toReal(Instance_getSelfVar(layer, cache.init));
+            if (init == 0 || init == 1) cover = fminf(cover, height - 240);
+        }
+        if (view[0] < layer->x || view[2] > layer->x + width - margin) continue;
+        if (sprite == cache.ground && renderer->drawAlpha == 1 &&
+            layer->y + 500 + height + 2 >= cover)
+            cover = fminf(cover, layer->y + 440 + margin);
+        GMLReal spriteHeight = RValue_toReal(Instance_getSelfVar(layer, cache.sprHeight));
+        if (spriteHeight == 0) spriteHeight = ctx->dataWin->sprt.sprites[sprite].height;
+        bottom = fminf(bottom, (float)spriteHeight);
+        if (bottom - top < 8) continue;
+        if (layer->y + bottom + 8 - margin >= cover)
+            cover = fminf(cover, layer->y + top + margin);
+    }
+    return cover < view[3] ? cover : INFINITY;
+}
+#endif
 
 static void drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color) {
     renderer->drawColor = color;
@@ -75,6 +133,10 @@ static void drawTiledArea(Renderer* renderer, int32_t spriteIndex, int32_t subim
             if (clippedH > tpag->sourceHeight) clippedH = tpag->sourceHeight;
             if (clippedW <= 0 || clippedH <= 0) continue;
 #ifdef PLATFORM_3DS
+            if (spriteIndex == cache.lights &&
+                C3D_drawSpriteSparsePart(renderer, tpagIndex, clippedW, clippedH,
+                    dstX, dstY, color, alpha, view))
+                continue;
             if (trimRows && C3D_drawSpriteShadowPart(renderer, tpagIndex, clippedW,
                 clippedH, dstX, dstY, color, alpha, shadowFollows))
                 continue;
@@ -170,6 +232,10 @@ static void drawPerspectivePath(Renderer* renderer, float x, float y, int32_t in
 
 static void drawGridEllipse(Renderer* renderer, float cx, float cy, float rx, float ry,
     const float* view) {
+    if (view != nullptr &&
+        (cx + fabsf(rx) < view[0] - 2 || cx - fabsf(rx) > view[2] + 2 ||
+         cy + fabsf(ry) < view[1] - 2 || cy - fabsf(ry) > view[3] + 2))
+        return;
     int32_t segments = Renderer_normalizeCirclePrecision(renderer->circlePrecision);
     if (cache.circleSegments != segments) {
         float step = 6.2831853f / (float)segments;
@@ -400,14 +466,27 @@ static bool parallaxerLayerCyberDraw(VMContext* ctx, RValue* outResult) {
             GMLReal yy = teacup ? 8500 : (camera != nullptr ? camera->viewY : -1);
             Instance_setSelfVar(self, cache.xx, RValue_makeReal(xx));
             Instance_setSelfVar(self, cache.yy, RValue_makeReal(yy));
-            drawLines(ctx, self, xx, yy, (float)yy, view);
+            const float* gridView = view;
+#ifdef PLATFORM_3DS
+            float gridBounds[4];
+            if (view != nullptr) {
+                memcpy(gridBounds, view, sizeof(gridBounds));
+                gridBounds[3] = fminf(gridBounds[3], parallaxCoverY(ctx, self, view, true));
+                gridView = gridBounds;
+            }
+#endif
+            drawLines(ctx, self, xx, yy, (float)yy, gridView);
         }
 
+        float cover = INFINITY;
         if (renderer != nullptr) {
+#ifdef PLATFORM_3DS
+            cover = parallaxCoverY(ctx, self, view, false) - 1;
+#endif
             drawTiledArea(renderer, spriteIndex, 0, x, y, x + width,
-                y + (float)spriteHeight, 0xFFFFFF, 1, view, true);
+                fminf(y + (float)spriteHeight, cover), 0xFFFFFF, 1, view, true);
             drawTiledArea(renderer, spriteIndex, 0, x, y + 8, x + width,
-                y + 8 + (float)spriteHeight, 0x808080, 1, view, false);
+                fminf(y + 8 + (float)spriteHeight, cover), 0x808080, 1, view, false);
         }
 
         if (spriteIndex == cache.buildings) {
@@ -417,7 +496,7 @@ static bool parallaxerLayerCyberDraw(VMContext* ctx, RValue* outResult) {
                 renderer->drawAlpha = 1;
                 renderer->vtable->gpuSetBlendMode(renderer, bm_add);
                 drawTiledArea(renderer, cache.lights, 0, x, y + 8, width,
-                    y + 8 + (float)spriteHeight, 0xFFFFFF,
+                    fminf(y + 8 + (float)spriteHeight, cover), 0xFFFFFF,
                     (float)(0.5 + GMLReal_sin(phase / 12) * 0.1), view, false);
                 renderer->vtable->gpuSetBlendMode(renderer, bm_normal);
             }
@@ -442,6 +521,16 @@ static bool parallaxerLayerCyberDraw(VMContext* ctx, RValue* outResult) {
 }
 
 void NativeChapter2CyberBackgroundDraw_register(VMContext* ctx) {
+#ifdef PLATFORM_3DS
+    cache.layerObject = -1;
+    for (uint32_t i = 0; i < ctx->dataWin->objt.count; ++i) {
+        const GameObject* object = &ctx->dataWin->objt.objects[i];
+        if (object->present && strcmp(object->name, "obj_parallaxer_layer_cyber") == 0) {
+            cache.layerObject = (int32_t)i;
+            break;
+        }
+    }
+#endif
     cache.circleSegments = 0;
     cache.clouds = cache.buildings = cache.ground = cache.lights = cache.teacup = -1;
     cache.sky = cache.stars = cache.blackSky = cache.coasterTile = cache.coasterCity = -1;

@@ -355,6 +355,7 @@ typedef struct {
     uint32_t itemIndex;
     int32_t visibleTop, visibleBottom;
     int32_t opaqueTop, opaqueBottom;
+    uint16_t stripLeft[128], stripRight[128];
 } N3DSSpriteRowCache;
 
 typedef struct {
@@ -3461,6 +3462,10 @@ static bool C3D_scanSpriteRows(N3DSRenderer* renderer, const N3DSAtlasItem* item
     rows->visibleTop = item->height;
     rows->visibleBottom = 0;
     rows->opaqueTop = rows->opaqueBottom = 0;
+    for (uint32_t i = 0; i < 128; ++i) {
+        rows->stripLeft[i] = item->width;
+        rows->stripRight[i] = 0;
+    }
     int32_t opaqueStart = 0;
     for (uint32_t y = 0; y < item->height; ++y) {
         uint8_t alpha[1024] = {0};
@@ -3491,6 +3496,11 @@ static bool C3D_scanSpriteRows(N3DSRenderer* renderer, const N3DSAtlasItem* item
         for (uint32_t x = 0; x < item->width; ++x) {
             if (alpha[x] < minimum) minimum = alpha[x];
             if (alpha[x] > maximum) maximum = alpha[x];
+            if (alpha[x] != 0) {
+                uint32_t strip = y / 8;
+                if (x < rows->stripLeft[strip]) rows->stripLeft[strip] = x;
+                if (x + 1 > rows->stripRight[strip]) rows->stripRight[strip] = x + 1;
+            }
         }
         if (maximum != 0) {
             if ((int32_t)y < rows->visibleTop) rows->visibleTop = y;
@@ -3505,23 +3515,15 @@ static bool C3D_scanSpriteRows(N3DSRenderer* renderer, const N3DSAtlasItem* item
     return true;
 }
 
-bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
-    float height, float x, float y, uint32_t color, float alpha, bool shadowFollows) {
-    N3DSRenderer* renderer = (N3DSRenderer*)base;
-    const N3DSRenderState* state = &renderer->renderState;
+static N3DSSpriteRowCache* C3D_getSpriteRows(N3DSRenderer* renderer, int32_t tpagIndex,
+    bool fullSprite) {
     N3DSAtlasItem* item;
-    if (base->texFilter || !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
-        state->blendSrc != bm_src_alpha || state->blendDst != bm_inv_src_alpha ||
-        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_inv_src_alpha ||
-        (shadowFollows && alpha != 1.0f) ||
-        (state->alphaTestEnabled && state->alphaTestRef == 255) ||
-        !C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item))
-        return false;
-    const TexturePageItem* tpag = &base->dataWin->tpag.items[tpagIndex];
-    if (tpag->targetX != 0 || tpag->targetY != 0 ||
-        item->width != tpag->sourceWidth || item->height != tpag->sourceHeight ||
-        item->width != tpag->boundingWidth || item->height != tpag->boundingHeight)
-        return false;
+    if (!C3D_getAtlasBinding(renderer, tpagIndex, NULL, &item)) return NULL;
+    const TexturePageItem* tpag = &renderer->base.dataWin->tpag.items[tpagIndex];
+    if (item->width != tpag->sourceWidth || item->height != tpag->sourceHeight ||
+        (fullSprite && (tpag->targetX != 0 || tpag->targetY != 0 ||
+            item->width != tpag->boundingWidth || item->height != tpag->boundingHeight)))
+        return NULL;
 
     uint32_t itemIndex = renderer->tpagBindings[tpagIndex].atlasItemIndex;
     N3DSSpriteRowCache* rows = NULL;
@@ -3538,10 +3540,44 @@ bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
                 break;
             }
         }
-        if (rows == NULL || !C3D_scanSpriteRows(renderer, item, rows)) return false;
+        if (rows == NULL || !C3D_scanSpriteRows(renderer, item, rows)) return NULL;
         rows->itemIndex = itemIndex;
         rows->valid = true;
     }
+    return rows;
+}
+
+bool C3D_getSpriteOpaqueRows(Renderer* base, int32_t tpagIndex, float* top, float* bottom) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSRenderState* state = &renderer->renderState;
+    if (base->texFilter || base->currentShader != -1 || base->d3d != NULL ||
+        renderer->screenTransformActive || renderer->customCameraTransformActive ||
+        renderer->currentViewAngle != 0.0f ||
+        !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
+        state->blendSrc != bm_src_alpha || state->blendDst != bm_inv_src_alpha ||
+        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_inv_src_alpha ||
+        !state->colorWriteR || !state->colorWriteG || !state->colorWriteB || !state->colorWriteA ||
+        (state->alphaTestEnabled && state->alphaTestRef == 255))
+        return false;
+    N3DSSpriteRowCache* rows = C3D_getSpriteRows(renderer, tpagIndex, true);
+    if (rows == NULL || rows->opaqueTop >= rows->opaqueBottom) return false;
+    *top = (float)rows->opaqueTop;
+    *bottom = (float)rows->opaqueBottom;
+    return true;
+}
+
+bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, bool shadowFollows) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSRenderState* state = &renderer->renderState;
+    if (base->texFilter || !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
+        state->blendSrc != bm_src_alpha || state->blendDst != bm_inv_src_alpha ||
+        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_inv_src_alpha ||
+        (shadowFollows && alpha != 1.0f) ||
+        (state->alphaTestEnabled && state->alphaTestRef == 255))
+        return false;
+    N3DSSpriteRowCache* rows = C3D_getSpriteRows(renderer, tpagIndex, true);
+    if (rows == NULL) return false;
 
     float top = rows->visibleTop;
     float bottom = fminf(height, rows->visibleBottom);
@@ -3558,6 +3594,41 @@ bool C3D_drawSpriteShadowPart(Renderer* base, int32_t tpagIndex, float width,
     if (hiddenBottom < bottom)
         C3D_drawSpritePart(base, tpagIndex, 0, hiddenBottom, width, bottom - hiddenBottom,
             x, y + hiddenBottom, 1, 1, 0, 0, 0, color, alpha);
+    return true;
+}
+
+bool C3D_drawSpriteSparsePart(Renderer* base, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, const float* view) {
+    N3DSRenderer* renderer = (N3DSRenderer*)base;
+    const N3DSRenderState* state = &renderer->renderState;
+    if (base->texFilter || base->currentShader != -1 || base->d3d != NULL ||
+        renderer->screenTransformActive || renderer->customCameraTransformActive ||
+        renderer->currentViewAngle != 0.0f ||
+        !state->blendEnabled || state->blendEq != GPU_BLEND_ADD ||
+        state->blendSrc != bm_src_alpha || state->blendDst != bm_one ||
+        state->blendSrcAlpha != bm_one || state->blendDstAlpha != bm_one)
+        return false;
+    N3DSSpriteRowCache* rows = C3D_getSpriteRows(renderer, tpagIndex, false);
+    if (rows == NULL) return false;
+
+    C3D_floorSpritePosition(renderer, 0, 0, &x, &y);
+    N3DSDrawMapper mapper;
+    C3D_mapInitPart(&mapper, width, height, x, y, 1, 1, 0, 0, 0);
+    uint32_t rgba = C3D_makeColor(color, alpha);
+    float bottom = fminf(height, rows->visibleBottom);
+    for (int32_t strip = rows->visibleTop / 8; strip * 8 < bottom; ++strip) {
+        float left = rows->stripLeft[strip];
+        float right = fminf(width, rows->stripRight[strip]);
+        float top = fmaxf(strip * 8, rows->visibleTop);
+        float end = fminf(strip * 8 + 8, bottom);
+        if (left >= right) continue;
+        if (view != NULL && (x + right < view[0] - 2 || x + left > view[2] + 2 ||
+            y + end < view[1] - 2 || y + top > view[3] + 2))
+            continue;
+        C3D_drawAtlas(renderer, tpagIndex,
+            (N3DSAtlasSource){left, top, right - left, end - top},
+            &mapper, (N3DSAtlasDest){left, top, right, end}, rgba);
+    }
     return true;
 }
 

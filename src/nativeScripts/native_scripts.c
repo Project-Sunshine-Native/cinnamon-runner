@@ -99,6 +99,8 @@ void NativeChapter2ChaseenemyDraw_register(VMContext* ctx);
 void NativeChapter2ChaseenemyStep_register(VMContext* ctx);
 void NativeChapter2WerewireDraw_register(VMContext* ctx);
 void NativeChapter2BulletInit_register(VMContext* ctx);
+void NativeChapter2Beatbullet2_register(VMContext* ctx);
+void NativeChapter2Beatflash_register(VMContext* ctx);
 void NativeChapter2WerewireStep_register(VMContext* ctx);
 void NativeChapter2WerewireLaserSquareStep_register(VMContext* ctx);
 void NativeChapter2WerewireLaserCircleStep_register(VMContext* ctx);
@@ -238,6 +240,8 @@ static void registerDeltaruneChapter2(VMContext* ctx) {
     NativeChapter2ChaseenemyStep_register(ctx);
     NativeChapter2WerewireDraw_register(ctx);
     NativeChapter2BulletInit_register(ctx);
+    NativeChapter2Beatbullet2_register(ctx);
+    NativeChapter2Beatflash_register(ctx);
     NativeChapter2WerewireStep_register(ctx);
     NativeChapter2WerewireLaserSquareStep_register(ctx);
     NativeChapter2WerewireLaserCircleStep_register(ctx);

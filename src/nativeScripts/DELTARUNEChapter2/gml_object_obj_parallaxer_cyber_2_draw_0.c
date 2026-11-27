@@ -33,13 +33,14 @@ static bool parallaxerCyber2Draw(VMContext* ctx, RValue* outResult) {
     bool horizontal = cache.roomMode == 1;
     bool teacup = cache.roomMode == 2;
     bool slide = cache.roomMode == 3;
-    if (!horizontal && !teacup && !slide) return false;
-
     Renderer* renderer = runner->renderer;
     GMLCamera* camera = Runner_getCameraForView(runner, 0);
     if (renderer == nullptr || camera == nullptr || renderer->currentShader >= 0 ||
+        renderer->d3d != nullptr ||
         camera->viewAngle != 0.0f || !renderer->vtable->gpuGetBlendEnable(renderer) ||
         renderer->vtable->gpuGetBlendMode(renderer) != bm_normal) return false;
+    if (renderer->vtable->gpuGetAlphaTestEnable != nullptr &&
+        renderer->vtable->gpuGetAlphaTestEnable(renderer)) return false;
 
     Instance* self = ctx->currentCallFrame->self;
     float width = (float)runner->currentRoom->width;
@@ -76,10 +77,14 @@ static bool parallaxerCyber2Draw(VMContext* ctx, RValue* outResult) {
                 renderer->drawColor, renderer->drawAlpha, false);
             renderer->drawAlpha = 0.3f;
             renderer->drawColor = 0;
-            for (int32_t i = 0; i < 6; ++i)
+            static const float overlayAlpha[6] = {
+                0.3f, 0.51f, 0.657f, 0.7599f, 0.83193f, 0.882351f};
+            for (int32_t i = 0; i < 6; ++i) {
+                float top = camY + 340.0f + i * 20.0f;
+                float bottom = i < 5 ? top + 20.0f : camY + 600.0f;
                 renderer->vtable->drawRectangle(renderer, camX - 80.0f,
-                    camY + 340.0f + i * 20.0f, camX + 720.0f,
-                    camY + 600.0f, 0, 0.3f, false);
+                    top, camX + 720.0f, bottom, 0, overlayAlpha[i], false);
+            }
         }
         renderer->drawColor = 0;
         renderer->drawAlpha = 1.0f;
@@ -99,7 +104,7 @@ static bool parallaxerCyber2Draw(VMContext* ctx, RValue* outResult) {
         renderer->drawColor = 0;
         renderer->vtable->drawRectangle(renderer, -100.0f, blackTop, blackRight,
             blackBottom, 0, renderer->drawAlpha, false);
-    } else {
+    } else if (slide) {
         static const float bandX[10] = {
             2480.0f, 2440.0f, 2400.0f, 2360.0f, 2320.0f,
             840.0f, 880.0f, 920.0f, 960.0f, 1000.0f};
