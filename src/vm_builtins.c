@@ -3683,9 +3683,9 @@ static RValue builtin_game_get_speed(VMContext* ctx, MAYBE_UNUSED RValue* args, 
 
 static RValue builtin_game_set_speed(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
     if (2 > argCount) return RValue_makeUndefined();
-
-    int32_t type = RValue_toInt32(args[0]);
-    GMLReal speedValue = RValue_toReal(args[1]);
+//correct arg order based off of the gm manual.
+    GMLReal speedValue = RValue_toReal(args[0]);
+    int32_t type = RValue_toInt32(args[1]);  
     GMLReal fps = (type == 0) ? speedValue : (speedValue > 0.0 ? (GMLReal) (1000000.0 / speedValue) : 0.0);
 
     ctx->runner->gameSpeedOverride = fps;
@@ -11182,14 +11182,14 @@ static RValue builtin_buffer_read(MAYBE_UNUSED VMContext* ctx, RValue* args, MAY
         case GML_BUFTYPE_U32: {
             if (buf->position + 4 <= buf->size) {
                 uint32_t val = BinaryUtils_readUint32(buf->data + buf->position);
-                result = RValue_makeReal((GMLReal) val);
+                result = val <= INT32_MAX ? RValue_makeInt32((int32_t) val) : RValue_makeInt64(val);
             }
             buf->position += 4;
             break;
         }
         case GML_BUFTYPE_S32: {
             if (buf->position + 4 <= buf->size) {
-                result = RValue_makeReal((GMLReal) BinaryUtils_readInt32(buf->data + buf->position));
+                result = RValue_makeInt32(BinaryUtils_readInt32(buf->data + buf->position));
             }
             buf->position += 4;
             break;
@@ -13196,6 +13196,33 @@ static RValue builtin_surface_resize(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     return RValue_makeUndefined();
 }
 
+uint8_t* gSurfacePixelCachePixels = nullptr;
+static int32_t gSurfacePixelCacheId = -1;
+static int32_t gSurfacePixelCacheW = 0;
+static int32_t gSurfacePixelCacheH = 0;
+
+void VM_surfacePixelCacheClear(void) {
+    free(gSurfacePixelCachePixels);
+    gSurfacePixelCachePixels = nullptr;
+    gSurfacePixelCacheId = -1;
+}
+
+static const uint8_t* surfacePixelsCached(Runner* runner, int32_t surfaceId, int32_t w, int32_t h) {
+    if (gSurfacePixelCachePixels != nullptr && gSurfacePixelCacheId == surfaceId && gSurfacePixelCacheW == w && gSurfacePixelCacheH == h)
+        return gSurfacePixelCachePixels;
+    VM_surfacePixelCacheClear();
+    uint8_t* pixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
+    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, pixels)) {
+        free(pixels);
+        return nullptr;
+    }
+    gSurfacePixelCachePixels = pixels;
+    gSurfacePixelCacheId = surfaceId;
+    gSurfacePixelCacheW = w;
+    gSurfacePixelCacheH = h;
+    return pixels;
+}
+
 static RValue builtin_surface_getpixel(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
 
@@ -13206,14 +13233,10 @@ static RValue builtin_surface_getpixel(VMContext* ctx, RValue* args, MAYBE_UNUSE
     int32_t h = (int32_t) Renderer_getSurfaceHeight(runner->renderer, surfaceId);
     if (x < 0 || x >= w || y < 0 || y >= h) return RValue_makeInt32(0);
 
-    uint8_t* surfacePixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
-    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, surfacePixels)) {
-        free(surfacePixels);
-        return RValue_makeInt32(0);
-    }
-    uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
+    const uint8_t* surfacePixels = surfacePixelsCached(runner, surfaceId, w, h);
+    if (surfacePixels == nullptr) return RValue_makeInt32(0);
+    const uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
     uint32_t bgr = p[0] | (p[1] << 8) | (p[2] << 16);
-    free(surfacePixels);
 
     return RValue_makeInt32(bgr);
 }
@@ -13227,14 +13250,10 @@ static RValue builtin_surface_getpixel_ext(VMContext* ctx, RValue* args, MAYBE_U
     int32_t h = (int32_t) Renderer_getSurfaceHeight(runner->renderer, surfaceId);
     if (x < 0 || x >= w || y < 0 || y >= h) return RValue_makeReal(0.0);
 
-    uint8_t* surfacePixels = (uint8_t*)safeMalloc((size_t)w * (size_t)h * 4);
-    if (!runner->renderer->vtable->surfaceGetPixels(runner->renderer, surfaceId, surfacePixels)) {
-        free(surfacePixels);
-        return RValue_makeReal(0.0);
-    }
-    uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
+    const uint8_t* surfacePixels = surfacePixelsCached(runner, surfaceId, w, h);
+    if (surfacePixels == nullptr) return RValue_makeReal(0.0);
+    const uint8_t* p = surfacePixels + (((h - 1 - y) * w) + x) * 4;
     uint32_t abgr = p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
-    free(surfacePixels);
 
     return RValue_makeReal((GMLReal)abgr);
 }
@@ -13870,8 +13889,13 @@ static RValue builtin_color_get_value(MAYBE_UNUSED VMContext* ctx, RValue* args,
 }
 
 // Display stubs
+#ifdef PLATFORM_3DS
+STUB_RETURN_VALUE(display_get_width, 400.0)
+STUB_RETURN_VALUE(display_get_height, 240.0)
+#else
 STUB_RETURN_VALUE(display_get_width, 640.0)
 STUB_RETURN_VALUE(display_get_height, 480.0)
+#endif
 
 static int32_t resolveGuiWidth(Runner* runner) {
     if (runner->guiWidth > 0) return runner->guiWidth;
@@ -13973,19 +13997,7 @@ static RValue builtin_display_set_gui_maximise(VMContext* ctx, MAYBE_UNUSED RVal
     return RValue_makeUndefined();
 }
 
-// place_meeting(x, y, obj) - returns true if the calling instance would collide with obj at position (x, y)
-static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCount) {
-    REQUIRE_ARGC_AT_LEAST("place_meeting", 3, RValue_makeBool(false));
-
-    Runner* runner = ctx->runner;
-    Instance* caller = ctx->currentCallFrame->self;
-    if (caller == nullptr) return RValue_makeBool(false);
-
-    GMLReal testX = RValue_toReal(args[0]);
-    GMLReal testY = RValue_toReal(args[1]);
-    int32_t target = VM_resolveInstanceTarget(ctx, RValue_toInt32(args[2]));
-    if (target == INSTANCE_NOONE) return RValue_makeBool(false);
-
+bool VMBuiltins_placeMeeting(Runner* runner, Instance* caller, GMLReal testX, GMLReal testY, int32_t target) {
     // ALWAYS SYNC THE GRID BEFORE CHANGING THE INSTANCE POSITION TO AVOID "SYNCING" THE TEST POSITION!
     SpatialGrid_syncGrid(runner, runner->spatialGrid);
 
@@ -14030,7 +14042,20 @@ static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCou
     caller->x = savedX;
     caller->y = savedY;
 
-    return RValue_makeBool(found);
+    return found;
+}
+
+// place_meeting(x, y, obj) - returns true if the calling instance would collide with obj at position (x, y)
+static RValue builtin_place_meeting(VMContext* ctx, RValue* args, int32_t argCount) {
+    REQUIRE_ARGC_AT_LEAST("place_meeting", 3, RValue_makeBool(false));
+
+    Instance* caller = ctx->currentCallFrame->self;
+    if (caller == nullptr) return RValue_makeBool(false);
+
+    int32_t target = VM_resolveInstanceTarget(ctx, RValue_toInt32(args[2]));
+    if (target == INSTANCE_NOONE) return RValue_makeBool(false);
+    return RValue_makeBool(VMBuiltins_placeMeeting(ctx->runner, caller,
+        RValue_toReal(args[0]), RValue_toReal(args[1]), target));
 }
 
 // GameMaker rounds the coordinates when in collision compatibility mode
@@ -20727,6 +20752,9 @@ static void particleTypeSetDefaults(ParticleType* type) {
 // Returns false once the system is full, so the callers' loops can stop instead of spinning through a
 // spawn count that came straight from GML and may be enormous.
 static bool particleSpawnAt(Runner* runner, ParticleSystem* system, int32_t typeId, GMLReal x, GMLReal y, uint32_t colour, bool fixedColour) {
+#ifdef PLATFORM_3DS
+    return false;
+#endif
     ParticleType* type = particleTypeGet(runner, typeId);
     if (type == nullptr) return false;
 
@@ -20831,6 +20859,9 @@ typedef struct { int32_t typeId; GMLReal x, y; int32_t count; } PendingSpawn;
 // then do the emitters stream. That order is GameMaker's, and it is why a streamed particle stands
 // still on the step it is born.
 static void particleUpdateSystem(Runner* runner, int32_t systemId) {
+#ifdef PLATFORM_3DS
+    return;
+#endif
     ParticleSystem* system = Particles_systemGet(runner, systemId);
     if (system == nullptr) return;
 
@@ -20980,6 +21011,9 @@ static uint32_t particleColourAt(const ParticleType* type, GMLReal ageFraction) 
 
 // Not static: backs both part_system_drawit and the system's entry in the depth-sorted draw list.
 void Particles_drawSystem(Runner* runner, int32_t systemId) {
+#ifdef PLATFORM_3DS
+    return;
+#endif
     ParticleSystem* system = Particles_systemGet(runner, systemId);
     if (system == nullptr || runner->renderer == nullptr) return;
 
@@ -25176,10 +25210,10 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     }
 
     // Window
-    VM_registerBuiltin(ctx, "window_get_fullscreen", builtin_window_get_fullscreen);
-    VM_registerBuiltin(ctx, "window_set_fullscreen", builtin_window_set_fullscreen);
     VM_registerBuiltin(ctx, "window_set_caption", builtin_window_set_caption);
     VM_registerBuiltin(ctx, "window_get_caption", builtin_window_get_caption);
+    VM_registerBuiltin(ctx, "window_get_fullscreen", builtin_window_get_fullscreen);
+    VM_registerBuiltin(ctx, "window_set_fullscreen", builtin_window_set_fullscreen);
     VM_registerBuiltin(ctx, "window_get_width", builtin_window_get_width);
     VM_registerBuiltin(ctx, "window_get_height", builtin_window_get_height);
     VM_registerBuiltin(ctx, "window_get_x", builtin_window_get_x);

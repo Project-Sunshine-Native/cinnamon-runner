@@ -445,7 +445,8 @@ static uint32_t resolveLocalSlot(VMContext* ctx, int32_t varID) {
         slot = (uint32_t) varID;
     } else {
         // BC13/BC14 and BC17+: allocate the slot dynamically because the data.win CANNOT be trusted to know how many localVars the script has
-        slot = IntIntHashMap_getOrInsertSequential(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID);
+        if (!IntIntHashMap_tryGet(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID, &slot))
+            slot = IntIntHashMap_getOrInsertSequential(ctx->currentCallFrame->currentCodeLocalsSlotMap, varID);
     }
 
     // Grow this frame's localVars window to cover `slot` whether the entry is pre-existing or freshly allocated.
@@ -1966,6 +1967,9 @@ static void handleDup(VMContext* ctx, OpWord opword) {
 
 // ===[ Function Call Handler ]===
 
+extern uint8_t* gSurfacePixelCachePixels;
+void VM_surfacePixelCacheClear(void);
+
 static void handleCall(VMContext* ctx, OpWord opword, const uint8_t* extraData) {
     int32_t argCount = OpWord_extra(opword);
     uint32_t funcIndex = resolveFuncOperand(extraData);
@@ -1980,6 +1984,41 @@ static void handleCall(VMContext* ctx, OpWord opword, const uint8_t* extraData) 
         repeat(argCount, i) {
             args[i] = stackPop(ctx);
         }
+    }
+
+    if (gSurfacePixelCachePixels != nullptr) {
+        static uint8_t* sFnMayModify = nullptr;
+        static uint32_t sFnMayModifyCount = 0;
+        static const void* sFnMayModifyTable = nullptr;
+        if (sFnMayModify == nullptr || sFnMayModifyCount != ctx->dataWin->func.functionCount || sFnMayModifyTable != ctx->dataWin->func.functions) {
+            free(sFnMayModify);
+            sFnMayModifyCount = ctx->dataWin->func.functionCount;
+            sFnMayModifyTable = ctx->dataWin->func.functions;
+            sFnMayModify = (uint8_t*)safeCalloc(sFnMayModifyCount, 1);
+        }
+        if (sFnMayModify[funcIndex] == 0) {
+            static const char* const prefixes[] = {
+                "draw_", "surface_", "shader_", "gpu_", "vertex_", "d3d_",
+                "application_surface", "texture_", "room_", "event_perform", "script_execute",
+            };
+            const char* name = ctx->dataWin->func.functions[funcIndex].name;
+            bool isReadOnly = strncmp(name, "surface_get", 11) == 0 || strcmp(name, "surface_exists") == 0 ||
+                strncmp(name, "draw_get", 8) == 0 || strncmp(name, "draw_set_", 9) == 0 ||
+                strncmp(name, "gpu_get", 7) == 0 || strncmp(name, "gpu_set_", 8) == 0 ||
+                strncmp(name, "shader_get", 10) == 0 || strncmp(name, "texture_get", 11) == 0 ||
+                strncmp(name, "room_get", 8) == 0 || strcmp(name, "room_exists") == 0;
+            bool mayModify = false;
+            if (!isReadOnly) {
+                repeat(sizeof(prefixes) / sizeof(prefixes[0]), i) {
+                    if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0) {
+                        mayModify = true;
+                        break;
+                    }
+                }
+            }
+            sFnMayModify[funcIndex] = mayModify ? 2 : 1;
+        }
+        if (sFnMayModify[funcIndex] == 2) VM_surfacePixelCacheClear();
     }
 
 #ifdef ENABLE_VM_TRACING
@@ -3734,6 +3773,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     // The instruction pointer before this CallFrame was created
     uint32_t instructionPointerWhenTheCallFrameWasCreated = ctx->ip;
     uint32_t stackTopWhenTheCallFrameWasCreated = ctx->stack.top;
+    int32_t savearefBalanceWhenTheCallFrameWasCreated = ctx->savearefBalance;
 
     ctx->savearefBalance = 0;
 
@@ -3742,7 +3782,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
 
     // Execute the callee
 #ifdef ENABLE_VM_GML_PROFILER
-    Profiler_enter(ctx->profiler, code->name);
+    if (ctx->profiler != nullptr) Profiler_enter(ctx->profiler, code->name);
 #endif
     RValue result;
     bool handledNatively = nativeScript != nullptr && nativeScript(ctx, &result);
@@ -3754,7 +3794,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
         result = executeBytecodeInstructions(ctx, code);
     }
 #ifdef ENABLE_VM_GML_PROFILER
-    Profiler_exit(ctx->profiler);
+    if (ctx->profiler != nullptr) Profiler_exit(ctx->profiler);
 #endif
 
     requireMessage(ctx->savearefBalance == 0, "SAVEAREF/RESTOREAREF imbalance at end of VM_executeCode (unpaired SAVEAREF)");
@@ -3762,6 +3802,10 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
     // Strengthen result BEFORE freeing callee locals/scriptArgs: if result is a weak view into callee state, the upcoming frees would leave a dangling pointer.
     // For owning results, the refCount/string buffer stays valid (the callee transferred one ownership slot to us).
     result = RValue_stealOwnershipOrCopy(result);
+
+    Runner* runner = (Runner*) ctx->runner;
+    bool freeReleasedStructs = !gTrackReleasedStructs && runner != nullptr && runner->structsCreatedSinceSweep >= STRUCT_EARLY_FREE_THRESHOLD;
+    if (freeReleasedStructs) gTrackReleasedStructs = true;
 
     // Now that we have executed the current script, we can free the current CallFrame and "pop" it
     // Free callee locals
@@ -3784,10 +3828,13 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex, Instance* selfInstance,
 
     // Restore caller frame
     ctx->ip = instructionPointerWhenTheCallFrameWasCreated;
+    ctx->savearefBalance = savearefBalanceWhenTheCallFrameWasCreated;
 
     // Reset all values in the stack (see issue #137)
     // Keep in mind that recent GameMaker versions do seem to emit Pop/Popz when exiting loops (example: when using a repeat + return) but older versions DO need it
     unwindVMStack(ctx, stackTopWhenTheCallFrameWasCreated);
+
+    if (freeReleasedStructs) Runner_freeReleasedStructs(runner, selfInstance, otherInstance);
 
     return result;
 }
