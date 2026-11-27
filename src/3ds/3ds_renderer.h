@@ -31,6 +31,9 @@ void C3D_getViewRect(const Renderer* renderer, int32_t rect[4]);
 bool C3D_getTileCullRect(const Renderer* renderer, float rect[4]);
 bool C3D_drawSpriteShadowPart(Renderer* renderer, int32_t tpagIndex, float width,
     float height, float x, float y, uint32_t color, float alpha, bool shadowFollows);
+bool C3D_getSpriteOpaqueRows(Renderer* renderer, int32_t tpagIndex, float* top, float* bottom);
+bool C3D_drawSpriteSparsePart(Renderer* renderer, int32_t tpagIndex, float width,
+    float height, float x, float y, uint32_t color, float alpha, const float* view);
 void C3D_drawLineSegments(Renderer* renderer, const float (*segments)[4], uint32_t count,
     float width, uint32_t color, float alpha, const float clipRect[4]);
 bool C3D_drawPackedTilemap(Renderer* renderer, const RoomLayerTilesData* data,

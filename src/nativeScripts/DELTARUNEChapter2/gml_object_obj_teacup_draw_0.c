@@ -7,6 +7,11 @@
 #include "stb_ds.h"
 #include "vm_builtins.h"
 
+#ifdef PLATFORM_3DS
+#include "3ds/3ds_renderer.h"
+#endif
+
+#include <math.h>
 #include <string.h>
 
 #if defined(__clang__) || defined(_MSC_VER)
@@ -33,7 +38,23 @@ static struct {
 #define CUP_REAL(inst, name) RValue_toReal(CUP_GET(inst, name))
 #define CUP_SET(inst, name, value) Instance_setSelfVar((inst), cache.name, RValue_makeReal((GMLReal)(value)))
 
-static void teacupDrawSprite(Renderer* renderer, Instance* self, int32_t sprite, int32_t frame, GMLReal y) {
+static bool teacupSpriteVisible(Renderer* renderer, int32_t spriteIndex, float x, float y,
+    float xscale, float yscale, float angle, const float* view) {
+    if (view == nullptr || angle != 0) return true;
+    const Sprite* sprite = &renderer->dataWin->sprt.sprites[spriteIndex];
+    float left = x - sprite->originX * xscale;
+    float top = y - sprite->originY * yscale;
+    float right = left + sprite->width * xscale;
+    float bottom = top + sprite->height * yscale;
+    return fmaxf(left, right) >= view[0] - 2 && fminf(left, right) <= view[2] + 2 &&
+        fmaxf(top, bottom) >= view[1] - 2 && fminf(top, bottom) <= view[3] + 2;
+}
+
+static void teacupDrawSprite(Renderer* renderer, Instance* self, int32_t sprite, int32_t frame,
+    GMLReal y, const float* view) {
+    if (!teacupSpriteVisible(renderer, sprite, self->x, (float)y,
+        self->imageXscale, self->imageYscale, (float)self->imageAngle, view))
+        return;
     Renderer_drawSpriteExt(renderer, sprite, frame, self->x, (float)y,
         self->imageXscale, self->imageYscale, (float)self->imageAngle, self->imageBlend, self->imageAlpha);
 }
@@ -43,6 +64,14 @@ static bool teacupDraw(VMContext* ctx, RValue* outResult) {
     Instance* self = ctx->currentCallFrame->self;
     Renderer* renderer = runner->renderer;
     if (renderer == nullptr) return false;
+    const float* view = nullptr;
+#ifdef PLATFORM_3DS
+    float visible[4];
+    if (renderer->currentShader == -1 && renderer->d3d == nullptr &&
+        Runner_surfaceGetTarget(runner) == runner->applicationSurfaceId &&
+        C3D_getTileCullRect(renderer, visible))
+        view = visible;
+#endif
     GMLReal epsilon = runner->mathEpsilon;
     if (NativeScript_compareReals(CUP_REAL(self, mode), 0, epsilon) != 0) {
         if (RValue_toBool(CUP_GET(self, held))) {
@@ -61,80 +90,125 @@ static bool teacupDraw(VMContext* ctx, RValue* outResult) {
     GMLReal total = RValue_toReal(segments) + 1;
     int32_t i = 0;
     for (; NativeScript_compareReals(i, total, epsilon) < 0; ++i) {
+        int32_t sprite = i == 0 ? cache.screwEnd : cache.screw;
+        float y = (float)(bottomY + 24 - i * 30 - (i == 0 ? 2 : 0));
+        if (!teacupSpriteVisible(renderer, sprite, self->x, y, 2, 2, 0, view))
+            continue;
         CUP_SET(self, i, i);
-        Renderer_drawSpriteExt(renderer, i == 0 ? cache.screwEnd : cache.screw, 0, self->x,
-            (float)(bottomY + 24 - i * 30 - (i == 0 ? 2 : 0)), 2, 2, 0, 0xFFFFFF, 1);
+        Renderer_drawSpriteExt(renderer, sprite, 0, self->x, y, 2, 2, 0, 0xFFFFFF, 1);
     }
     CUP_SET(self, i, i);
-    teacupDrawSprite(renderer, self, cache.base, 0, bottomY + 20);
-    teacupDrawSprite(renderer, self, cache.platform, 0, self->y);
+    teacupDrawSprite(renderer, self, cache.base, 0, bottomY + 20, view);
+    teacupDrawSprite(renderer, self, cache.platform, 0, self->y, view);
     RValue centerFrame = NativeScript_binary(ctx, NATIVE_OP_INT_DIVIDE,
         CUP_GET(self, spin), RValue_makeReal(22.5));
     int32_t frame = RValue_toInt32(centerFrame);
     if (frame < 0) frame = (int32_t)self->imageIndex;
-    teacupDrawSprite(renderer, self, cache.center, frame, self->y);
+    teacupDrawSprite(renderer, self, cache.center, frame, self->y, view);
 
-    RValue surface = CUP_GET(self, shadowSurf);
-    RValue exists = cache.surfaceExists(ctx, &surface, 1);
-    bool haveSurface = RValue_toBool(exists);
-    RValue_free(&exists);
-    if (!haveSurface) {
-        RValue args[] = {
-            VMBuiltins_getVariable(ctx, self, BUILTIN_VAR_SPRITE_WIDTH, "sprite_width", -1),
-            VMBuiltins_getVariable(ctx, self, BUILTIN_VAR_SPRITE_HEIGHT, "sprite_height", -1),
-        };
-        RValue created = cache.surfaceCreate(ctx, args, 2);
-        Instance_setSelfVar(self, cache.shadowSurf, created);
-        RValue_free(&created);
-        surface = CUP_GET(self, shadowSurf);
-    }
-    RValue result = cache.surfaceTarget(ctx, &surface, 1);
-    RValue_free(&result);
-    renderer->vtable->clearScreen(renderer, 0, 0);
-    renderer->drawColor = 0;
-    renderer->vtable->gpuSetBlendModeExt(renderer, 2, 1, 2, 1);
-    InstanceBBox bbox = Collision_computeBBox(runner, self);
-    GMLReal left = bbox.valid ? bbox.left : self->x;
-    GMLReal top = bbox.valid ? bbox.top : self->y;
     Instance** bullets = runner->instancesByObject[cache.bulletObject];
     size_t activeCount = 0;
-    for (size_t j = 0; j < arrlenu(bullets); ++j)
-        if (bullets[j]->active) activeCount++;
+    bool drawShadows = true;
+#ifdef PLATFORM_3DS
+    drawShadows = Runner_surfaceGetTarget(runner) != runner->applicationSurfaceId ||
+        renderer->currentShader != -1 || renderer->d3d != nullptr;
+#endif
     for (size_t j = 0; j < arrlenu(bullets); ++j) {
-        Instance* bullet = bullets[activeCount > 2 ? arrlenu(bullets) - 1 - j : j];
-        if (!bullet->active || NativeScript_compareReals(CUP_REAL(bullet, master), self->instanceId, epsilon) != 0)
-            continue;
-        GMLReal closeness = ((GMLReal)bullet->ystart - (self->y - 300)) / 300;
-        CUP_SET(bullet, closenessToRide, closeness);
-        GMLReal alpha = closeness - CUP_REAL(bullet, cutOff) / CUP_REAL(bullet, spriteHeightRoot);
-        GMLReal x = bullet->x - left;
-        GMLReal y = (self->y + CUP_REAL(bullet, circleY)) - top;
-        Renderer_drawSpriteExt(renderer, bullet->spriteIndex, (int32_t)bullet->imageIndex,
-            (float)x, (float)y, bullet->imageXscale, bullet->imageYscale * 0.5f, 0, 0, (float)alpha);
-        if (RValue_toBool(CUP_GET(bullet, lineToCenter))) {
-            renderer->drawColor = 0;
-            renderer->drawAlpha = (float)alpha;
-            renderer->vtable->drawLine(renderer, (float)x, (float)y,
-                (float)(bullet->xstart - left), (float)(self->y - top), 4, 0, renderer->drawAlpha);
-            renderer->drawAlpha = 1;
-        }
+        if (!bullets[j]->active) continue;
+        activeCount++;
+        if (!drawShadows &&
+            NativeScript_compareReals(CUP_REAL(bullets[j], master), self->instanceId, epsilon) == 0)
+            drawShadows = true;
     }
-    renderer->vtable->gpuSetBlendMode(renderer, 0);
-    result = cache.surfaceReset(ctx, nullptr, 0);
-    RValue_free(&result);
-    RValue surfaceArgs[] = { CUP_GET(self, shadowSurf), RValue_makeReal(left), RValue_makeReal(top) };
-    result = cache.drawSurface(ctx, surfaceArgs, 3);
-    RValue_free(&result);
+    if (drawShadows) {
+        RValue surface = CUP_GET(self, shadowSurf);
+        RValue exists = cache.surfaceExists(ctx, &surface, 1);
+        bool haveSurface = RValue_toBool(exists);
+        RValue_free(&exists);
+        InstanceBBox bbox = Collision_computeBBox(runner, self);
+        GMLReal left = bbox.valid ? bbox.left : self->x;
+        GMLReal top = bbox.valid ? bbox.top : self->y;
+        bool shadowVisible = true;
+        if (view != nullptr) {
+            float width, height;
+            if (haveSurface) {
+                int32_t surfaceId = RValue_toInt32(surface);
+                width = Renderer_getSurfaceWidth(renderer, surfaceId);
+                height = Renderer_getSurfaceHeight(renderer, surfaceId);
+            } else {
+                width = RValue_toReal(VMBuiltins_getVariable(ctx, self,
+                    BUILTIN_VAR_SPRITE_WIDTH, "sprite_width", -1));
+                height = RValue_toReal(VMBuiltins_getVariable(ctx, self,
+                    BUILTIN_VAR_SPRITE_HEIGHT, "sprite_height", -1));
+            }
+            if (width > 0 && height > 0)
+                shadowVisible = left + width >= view[0] - 2 && left <= view[2] + 2 &&
+                    top + height >= view[1] - 2 && top <= view[3] + 2;
+        }
+        if (shadowVisible && !haveSurface) {
+            RValue args[] = {
+                VMBuiltins_getVariable(ctx, self, BUILTIN_VAR_SPRITE_WIDTH, "sprite_width", -1),
+                VMBuiltins_getVariable(ctx, self, BUILTIN_VAR_SPRITE_HEIGHT, "sprite_height", -1),
+            };
+            RValue created = cache.surfaceCreate(ctx, args, 2);
+            Instance_setSelfVar(self, cache.shadowSurf, created);
+            RValue_free(&created);
+            surface = CUP_GET(self, shadowSurf);
+        }
+        if (shadowVisible) {
+            RValue result = cache.surfaceTarget(ctx, &surface, 1);
+            RValue_free(&result);
+            renderer->vtable->clearScreen(renderer, 0, 0);
+            renderer->vtable->gpuSetBlendModeExt(renderer, 2, 1, 2, 1);
+        }
+        renderer->drawColor = 0;
+        for (size_t j = 0; j < arrlenu(bullets); ++j) {
+            Instance* bullet = bullets[activeCount > 2 ? arrlenu(bullets) - 1 - j : j];
+            if (!bullet->active || NativeScript_compareReals(CUP_REAL(bullet, master), self->instanceId, epsilon) != 0)
+                continue;
+            GMLReal closeness = ((GMLReal)bullet->ystart - (self->y - 300)) / 300;
+            CUP_SET(bullet, closenessToRide, closeness);
+            GMLReal alpha = closeness - CUP_REAL(bullet, cutOff) / CUP_REAL(bullet, spriteHeightRoot);
+            GMLReal x = bullet->x - left;
+            GMLReal y = (self->y + CUP_REAL(bullet, circleY)) - top;
+            if (shadowVisible)
+                Renderer_drawSpriteExt(renderer, bullet->spriteIndex, (int32_t)bullet->imageIndex,
+                    (float)x, (float)y, bullet->imageXscale, bullet->imageYscale * 0.5f, 0, 0, (float)alpha);
+            if (RValue_toBool(CUP_GET(bullet, lineToCenter))) {
+                renderer->drawColor = 0;
+                renderer->drawAlpha = (float)alpha;
+                if (shadowVisible)
+                    renderer->vtable->drawLine(renderer, (float)x, (float)y,
+                        (float)(bullet->xstart - left), (float)(self->y - top), 4, 0, renderer->drawAlpha);
+                renderer->drawAlpha = 1;
+            }
+        }
+        renderer->vtable->gpuSetBlendMode(renderer, 0);
+        if (shadowVisible) {
+            RValue result = cache.surfaceReset(ctx, nullptr, 0);
+            RValue_free(&result);
+            RValue surfaceArgs[] = { CUP_GET(self, shadowSurf), RValue_makeReal(left), RValue_makeReal(top) };
+            result = cache.drawSurface(ctx, surfaceArgs, 3);
+            RValue_free(&result);
+        }
+    } else {
+        renderer->drawColor = 0;
+        renderer->vtable->gpuSetBlendMode(renderer, 0);
+    }
     if (runner->currentRoomIndex == cache.mazeRoom) {
         GMLReal alpha = CUP_REAL(self, drawtutorialarrows_alpha);
         bool show = NativeScript_compareReals(CUP_REAL(self, drawtutorialarrows), 1, epsilon) == 0;
         alpha += ((show ? 1 : 0) - alpha) * (show ? (GMLReal)0.15 : (GMLReal)0.35);
         CUP_SET(self, drawtutorialarrows_alpha, alpha);
         GMLReal wave = GMLReal_sin(CUP_REAL(self, idletimer) / 3) * 2;
-        Renderer_drawSpriteExt(renderer, cache.arrow, 0, self->x + 68, (float)(self->y + 34 - wave),
-            2, 2, 0, 0xFFFFFF, (float)alpha);
-        Renderer_drawSpriteExt(renderer, cache.arrow, 0, self->x - 72, (float)(self->y + 34 + wave),
-            -2, 2, 0, 0xFFFFFF, (float)alpha);
+        float rightY = (float)(self->y + 34 - wave);
+        float leftY = (float)(self->y + 34 + wave);
+        if (teacupSpriteVisible(renderer, cache.arrow, self->x + 68, rightY, 2, 2, 0, view))
+            Renderer_drawSpriteExt(renderer, cache.arrow, 0, self->x + 68, rightY,
+                2, 2, 0, 0xFFFFFF, (float)alpha);
+        if (teacupSpriteVisible(renderer, cache.arrow, self->x - 72, leftY, -2, 2, 0, view))
+            Renderer_drawSpriteExt(renderer, cache.arrow, 0, self->x - 72, leftY,
+                -2, 2, 0, 0xFFFFFF, (float)alpha);
     }
     renderer->drawColor = 255;
     if (RValue_toBool(CUP_GET(self, cupCharExists)) && RValue_toBool(CUP_GET(self, debugHitThisFrame))) {

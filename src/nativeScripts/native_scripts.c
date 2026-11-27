@@ -99,6 +99,8 @@ void NativeChapter2ChaseenemyDraw_register(VMContext* ctx);
 void NativeChapter2ChaseenemyStep_register(VMContext* ctx);
 void NativeChapter2WerewireDraw_register(VMContext* ctx);
 void NativeChapter2BulletInit_register(VMContext* ctx);
+void NativeChapter2Beatbullet2_register(VMContext* ctx);
+void NativeChapter2Beatflash_register(VMContext* ctx);
 void NativeChapter2WerewireStep_register(VMContext* ctx);
 void NativeChapter2WerewireLaserSquareStep_register(VMContext* ctx);
 void NativeChapter2WerewireLaserCircleStep_register(VMContext* ctx);
@@ -223,6 +225,45 @@ static void registerDeltaruneChapter1(VMContext* ctx) {
     NativeScissordancerStep_register(ctx);
 }
 
+static void registerDeltaruneChapter2(VMContext* ctx) {
+    NativeChapter2WriterDraw_register(ctx);
+    NativeChapter2DwTransitionLineStep_register(ctx);
+    NativeChapter2DwTransitionLineDraw_register(ctx);
+    NativeChapter2DwTransitionParticleStep_register(ctx);
+    NativeChapter2CaterpillarEndStep_register(ctx);
+    NativeChapter2HangplugDraw_register(ctx);
+    NativeChapter2CyberWallLightsDraw_register(ctx);
+    NativeChapter2MaincharaEndStep_register(ctx);
+    NativeChapter2TiledArea_register(ctx);
+    NativeChapter2ParallaxUpdate_register(ctx);
+    NativeChapter2SelectionMatrix_register(ctx);
+    NativeChapter2Charbox_register(ctx);
+    NativeChapter2BattlecontrollerDraw_register(ctx);
+    NativeChapter2DarkcontrollerDraw_register(ctx);
+    NativeChapter2BattlebackDraw_register(ctx);
+    NativeChapter2HeartStep_register(ctx);
+    NativeChapter2RegularBulletStep_register(ctx);
+    NativeChapter2TimeBeginStep_register(ctx);
+    NativeChapter2TeacupBulletStep_register(ctx);
+    NativeChapter2TeacupStep_register(ctx);
+    NativeChapter2TeacupDraw_register(ctx);
+    NativeChapter2ChaseenemyDraw_register(ctx);
+    NativeChapter2ChaseenemyStep_register(ctx);
+    NativeChapter2WerewireDraw_register(ctx);
+    NativeChapter2BulletInit_register(ctx);
+    NativeChapter2Beatbullet2_register(ctx);
+    NativeChapter2Beatflash_register(ctx);
+    NativeChapter2WerewireStep_register(ctx);
+    NativeChapter2WerewireLaserSquareStep_register(ctx);
+    NativeChapter2WerewireLaserCircleStep_register(ctx);
+    NativeChapter2ParallaxerCyberDraw_register(ctx);
+#ifdef PLATFORM_3DS
+    NativeChapter2ParallaxerCyber2Draw_register(ctx);
+#endif
+    NativeChapter2CyberBackgroundDraw_register(ctx);
+    NativeChapter2ParallaxerLayerDraw_register(ctx);
+}
+
 // We dont want the scripts running on a different completely unrelated game, so we'll check to see if the name here matches the games GEN8 name
 void NativeScripts_registerAll(VMContext* ctx) {
     const char* title = ctx->dataWin->gen8.displayName;
@@ -232,40 +273,7 @@ void NativeScripts_registerAll(VMContext* ctx) {
     } else if (strcmp(title, "DELTARUNE Chapter 1") == 0) {
         registerDeltaruneChapter1(ctx);
     } else if (strcmp(title, "DELTARUNE Chapter 2") == 0) {
-        NativeChapter2WriterDraw_register(ctx);
-        NativeChapter2DwTransitionLineStep_register(ctx);
-        NativeChapter2DwTransitionLineDraw_register(ctx);
-        NativeChapter2DwTransitionParticleStep_register(ctx);
-        NativeChapter2CaterpillarEndStep_register(ctx);
-        NativeChapter2HangplugDraw_register(ctx);
-        NativeChapter2CyberWallLightsDraw_register(ctx);
-        NativeChapter2MaincharaEndStep_register(ctx);
-        NativeChapter2TiledArea_register(ctx);
-        NativeChapter2ParallaxUpdate_register(ctx);
-        NativeChapter2SelectionMatrix_register(ctx);
-        NativeChapter2Charbox_register(ctx);
-        NativeChapter2BattlecontrollerDraw_register(ctx);
-        NativeChapter2DarkcontrollerDraw_register(ctx);
-        NativeChapter2BattlebackDraw_register(ctx);
-        NativeChapter2HeartStep_register(ctx);
-        NativeChapter2RegularBulletStep_register(ctx);
-        NativeChapter2TimeBeginStep_register(ctx);
-        NativeChapter2TeacupBulletStep_register(ctx);
-        NativeChapter2TeacupStep_register(ctx);
-        NativeChapter2TeacupDraw_register(ctx);
-        NativeChapter2ChaseenemyDraw_register(ctx);
-        NativeChapter2ChaseenemyStep_register(ctx);
-        NativeChapter2WerewireDraw_register(ctx);
-        NativeChapter2BulletInit_register(ctx);
-        NativeChapter2WerewireStep_register(ctx);
-        NativeChapter2WerewireLaserSquareStep_register(ctx);
-        NativeChapter2WerewireLaserCircleStep_register(ctx);
-        NativeChapter2ParallaxerCyberDraw_register(ctx);
-#ifdef PLATFORM_3DS
-        NativeChapter2ParallaxerCyber2Draw_register(ctx);
-#endif
-        NativeChapter2CyberBackgroundDraw_register(ctx);
-        NativeChapter2ParallaxerLayerDraw_register(ctx);
+        registerDeltaruneChapter2(ctx);
     } else if (strcmp(title, "DELTARUNE Chapter 3") == 0) {
         NativeChapter3Lerpvar_register(ctx);
         NativeChapter3Afterimage_register(ctx);
