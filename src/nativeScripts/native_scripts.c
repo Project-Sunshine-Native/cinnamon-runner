@@ -4,6 +4,7 @@
 
 #include <string.h>
 
+// UNDERTALE native script registration
 void NativeSnowfloorDraw_register(VMContext* ctx);
 void NativePiperSteamDraw_register(VMContext* ctx);
 void NativeSteamplume2Create_register(VMContext* ctx);
@@ -69,9 +70,28 @@ void NativeHotlandRededgeDraw_register(VMContext* ctx);
 void NativeBrightwaterfallDraw_register(VMContext* ctx);
 void NativeGlowparticle1Step_register(VMContext* ctx);
 void NativeRoundedgeDraw_register(VMContext* ctx);
+
+// DELTARUNE Chapter 1 native script registration
 void NativePurplegrassDraw_register(VMContext* ctx);
 void NativeBattlecontrollerDraw_register(VMContext* ctx);
 void NativeWriterDraw_register(VMContext* ctx);
+void NativeCharbox_register(VMContext* ctx);
+void NativeBattlebackDraw_register(VMContext* ctx);
+void NativeSelectionMatrix_register(VMContext* ctx);
+void NativeMaincharaEndStep_register(VMContext* ctx);
+void NativeTimeBeginStep_register(VMContext* ctx);
+void NativeRegularBulletStep_register(VMContext* ctx);
+void NativeHeartStep_register(VMContext* ctx);
+void NativeDarkcontrollerDraw_register(VMContext* ctx);
+void NativeCaterpillarEndStep_register(VMContext* ctx);
+void NativeDeviceChoiceDraw_register(VMContext* ctx);
+void NativeDarkPonmanDraw_register(VMContext* ctx);
+void NativeDarkPonmanStep_register(VMContext* ctx);
+void NativeLightfairyDraw_register(VMContext* ctx);
+void NativeLightfairyStep_register(VMContext* ctx);
+void NativeScissordancerStep_register(VMContext* ctx);
+
+// DELTARUNE Chapter 2 native script registration
 void NativeChapter2WriterDraw_register(VMContext* ctx);
 void NativeChapter2DwTransitionLineStep_register(VMContext* ctx);
 void NativeChapter2DwTransitionLineDraw_register(VMContext* ctx);
@@ -86,8 +106,6 @@ void NativeChapter2SelectionMatrix_register(VMContext* ctx);
 void NativeChapter2Charbox_register(VMContext* ctx);
 void NativeChapter2BattlecontrollerDraw_register(VMContext* ctx);
 void NativeChapter2DarkcontrollerDraw_register(VMContext* ctx);
-void NativeCharbox_register(VMContext* ctx);
-void NativeBattlebackDraw_register(VMContext* ctx);
 void NativeChapter2BattlebackDraw_register(VMContext* ctx);
 void NativeChapter2HeartStep_register(VMContext* ctx);
 void NativeChapter2RegularBulletStep_register(VMContext* ctx);
@@ -110,19 +128,8 @@ void NativeChapter2ParallaxerCyber2Draw_register(VMContext* ctx);
 #endif
 void NativeChapter2CyberBackgroundDraw_register(VMContext* ctx);
 void NativeChapter2ParallaxerLayerDraw_register(VMContext* ctx);
-void NativeSelectionMatrix_register(VMContext* ctx);
-void NativeMaincharaEndStep_register(VMContext* ctx);
-void NativeTimeBeginStep_register(VMContext* ctx);
-void NativeRegularBulletStep_register(VMContext* ctx);
-void NativeHeartStep_register(VMContext* ctx);
-void NativeDarkcontrollerDraw_register(VMContext* ctx);
-void NativeCaterpillarEndStep_register(VMContext* ctx);
-void NativeDeviceChoiceDraw_register(VMContext* ctx);
-void NativeDarkPonmanDraw_register(VMContext* ctx);
-void NativeDarkPonmanStep_register(VMContext* ctx);
-void NativeLightfairyDraw_register(VMContext* ctx);
-void NativeLightfairyStep_register(VMContext* ctx);
-void NativeScissordancerStep_register(VMContext* ctx);
+
+// DELTARUNE Chapter 3 native script registration
 void NativeChapter3Lerpvar_register(VMContext* ctx);
 void NativeChapter3Afterimage_register(VMContext* ctx);
 void NativeChapter3AfterimageScreen_register(VMContext* ctx);
@@ -264,10 +271,24 @@ static void registerDeltaruneChapter2(VMContext* ctx) {
     NativeChapter2ParallaxerLayerDraw_register(ctx);
 }
 
-// We dont want the scripts running on a different completely unrelated game, so we'll check to see if the name here matches the games GEN8 name
+static void registerDeltaruneChapter3(VMContext* ctx) {
+    NativeChapter3Lerpvar_register(ctx);
+    NativeChapter3Afterimage_register(ctx);
+    NativeChapter3AfterimageScreen_register(ctx);
+    NativeChapter3AfterimageBlend_register(ctx);
+    NativeChapter3DrawBeam_register(ctx);
+    NativeChapter3RoaringStar_register(ctx);
+    NativeChapter3Roaring2Draw_register(ctx);
+    NativeChapter3TunnelSlasher_register(ctx);
+    NativeChapter3SwordTunnelSword_register(ctx);
+    NativeChapter3PointingStar_register(ctx);
+    NativeChapter3ViewGet_register(ctx);
+}
+
+// We dont want the scripts running on a different completely unrelated game, so we'll check to see if the name here matches the running games name in the GEN8 chunk. If not, dont run the scripts
 void NativeScripts_registerAll(VMContext* ctx) {
     const char* title = ctx->dataWin->gen8.displayName;
-    if (title == nullptr) return;
+    if (title == NULL) return;
     if (strcmp(title, "UNDERTALE") == 0) {
         registerUndertale(ctx);
     } else if (strcmp(title, "DELTARUNE Chapter 1") == 0) {
@@ -275,16 +296,6 @@ void NativeScripts_registerAll(VMContext* ctx) {
     } else if (strcmp(title, "DELTARUNE Chapter 2") == 0) {
         registerDeltaruneChapter2(ctx);
     } else if (strcmp(title, "DELTARUNE Chapter 3") == 0) {
-        NativeChapter3Lerpvar_register(ctx);
-        NativeChapter3Afterimage_register(ctx);
-        NativeChapter3AfterimageScreen_register(ctx);
-        NativeChapter3AfterimageBlend_register(ctx);
-        NativeChapter3DrawBeam_register(ctx);
-        NativeChapter3RoaringStar_register(ctx);
-        NativeChapter3Roaring2Draw_register(ctx);
-        NativeChapter3TunnelSlasher_register(ctx);
-        NativeChapter3SwordTunnelSword_register(ctx);
-        NativeChapter3PointingStar_register(ctx);
-        NativeChapter3ViewGet_register(ctx);
+        registerDeltaruneChapter3(ctx);
     }
 }
