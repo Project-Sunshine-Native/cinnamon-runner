@@ -167,7 +167,6 @@ static char* n3ds_fsFindLegacySave(N3DSFileSystem* fs, const char* name) {
     char* selected = NULL;
     time_t modified = 0;
     n3ds_fsConsiderLegacySave(fs->gameBasePath, name, &selected, &modified);
-    n3ds_fsConsiderLegacySave(N3DS_SDMC_LEGACY_ROOT, name, &selected, &modified);
 
     if (strcmp(fs->saveBasePath, N3DS_SDMC_LEGACY_ROOT "/saves/DELTARUNE") == 0) {
         DIR* dir = opendir(N3DS_SDMC_LEGACY_ROOT);
