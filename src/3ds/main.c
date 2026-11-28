@@ -69,53 +69,6 @@ static void n3ds_appSyncMappedKeyboard(
 
 u32 __stacksize__ = 2u * 1024u * 1024u;
 
-extern char* fake_heap_start;
-extern char* fake_heap_end;
-extern u32 __ctru_heap;
-extern u32 __ctru_heap_size;
-extern u32 __ctru_linear_heap;
-extern u32 __ctru_linear_heap_size;
-
-// this is just a little test to see if the 3ds shits itself if you steal 20mb from the main heap and give it to linear
-void __system_allocateHeaps(void) {
-    Handle reslimit = 0;
-    if (R_FAILED(svcGetResourceLimit(&reslimit, CUR_PROCESS_HANDLE))) svcBreak(USERBREAK_PANIC);
-    s64 maxCommit = 0;
-    s64 currentCommit = 0;
-    ResourceLimitType reslimitType = RESLIMIT_COMMIT;
-    svcGetResourceLimitLimitValues(&maxCommit, reslimit, &reslimitType, 1);
-    svcGetResourceLimitCurrentValues(&currentCommit, reslimit, &reslimitType, 1);
-    svcCloseHandle(reslimit);
-
-    u32 remaining = (u32) (maxCommit - currentCommit) & ~0xFFFu;
-    u32 linearSize = (remaining / 2u) & ~0xFFFu;
-    u32 heapSize = remaining - linearSize;
-    if (heapSize > 24u * MB) {
-        heapSize = 24u * MB;
-        linearSize = remaining - heapSize;
-        if (linearSize > 32u * MB) {
-            linearSize = 32u * MB;
-            heapSize = remaining - linearSize;
-        }
-    }
-    if (heapSize > 96u * MB) {
-        heapSize = 96u * MB;
-        linearSize = remaining - heapSize;
-    }
-    if (remaining > N3DS_OLD3DS_APP_MEMORY_CAP_BYTES) {
-        linearSize += N3DS_NEW3DS_EXTRA_LINEAR_HEAP_BYTES;
-        heapSize -= N3DS_NEW3DS_EXTRA_LINEAR_HEAP_BYTES;
-    }
-
-    __ctru_heap_size = heapSize;
-    __ctru_linear_heap_size = linearSize;
-    if (R_FAILED(svcControlMemory(&__ctru_heap, OS_HEAP_AREA_BEGIN, 0, heapSize, MEMOP_ALLOC, MEMPERM_READ | MEMPERM_WRITE))) svcBreak(USERBREAK_PANIC);
-    if (R_FAILED(svcControlMemory(&__ctru_linear_heap, 0, 0, linearSize, MEMOP_ALLOC_LINEAR, MEMPERM_READ | MEMPERM_WRITE))) svcBreak(USERBREAK_PANIC);
-    mappableInit(OS_MAP_AREA_BEGIN, OS_MAP_AREA_END);
-    fake_heap_start = (char*) __ctru_heap;
-    fake_heap_end = fake_heap_start + heapSize;
-}
-
 static char gN3DSDataWinStatusLine[128] = "Looking for data.win";
 
 static float n3ds_appGetRoomFrameRate(const Runner* runner) {

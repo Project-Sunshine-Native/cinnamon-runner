@@ -1054,7 +1054,7 @@ static void n3ds_menuDrawSettings(N3DSMenu* menu, N3DSLoadingScreen* screen,
 
 static void n3ds_menuDrawCredits(N3DSMenu* menu, N3DSLoadingScreen* screen) {
     static const char* credits[] = {
-        "Cinnamon Launcher v1.06",
+        "Cinnamon Launcher v1.07",
         "by Project Sunshine/grayforz24682, casrielasriel, misdaze",
     };
     uint32_t color = menu->uiStyle == N3DS_LAUNCHER_DEVICE
